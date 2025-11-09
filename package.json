@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
-  "type": "module",                     
+  "type": "module",
   "scripts": {
-    "start": "nodemon main.js",            
+    "start": "nodemon main.js",
     "test": "mocha"
   },
   "dependencies": {
     "breezeconnect": "^1.0.29",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "kiteconnect": "^5.1.0",
     "smartapi-javascript": "^1.0.27",
