@@ -1,0 +1,25 @@
+{
+  "name": "ai_bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "type": "module",                     
+  "scripts": {
+    "start": "nodemon main.js",            
+    "test": "mocha"
+  },
+  "dependencies": {
+    "breezeconnect": "^1.0.29",
+    "express": "^5.1.0",
+    "kiteconnect": "^5.1.0",
+    "smartapi-javascript": "^1.0.27",
+    "speakeasy": "^2.0.0",
+    "technicalindicators": "^3.1.0"
+  },
+  "devDependencies": {
+    "mocha": "^10.8.2"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
