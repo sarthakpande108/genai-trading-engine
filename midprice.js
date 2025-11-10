@@ -1,11 +1,11 @@
-import { fetchLast20DaysDailyCandles, fetchLast20FiveMinCandlesRobust } from "./historicaldata.js";
+import { fetchLast26DaysDailyCandles, fetchLast26FiveMinCandlesRobust } from "./historicaldata.js";
 
 export async function getStockMidPrices(stockName, exchange = "NSE") {
   console.log(`\n📊 Fetching data for: ${stockName} (${exchange}) ...`);
 
   // Fetch data
-  const fiveMinCandles = await fetchLast20FiveMinCandlesRobust(stockName, exchange);
-  const dailyCandles = await fetchLast20DaysDailyCandles(stockName, exchange);
+  const fiveMinCandles = await fetchLast26FiveMinCandlesRobust(stockName, exchange);
+  const dailyCandles = await fetchLast26DaysDailyCandles(stockName, exchange);
 
   // Helper: compute mid price = (high + low) / 2
   const computeMidPrices = (candles) => {
@@ -28,7 +28,7 @@ export async function getStockMidPrices(stockName, exchange = "NSE") {
 }
 
 // Example run
-(async () => {
+{/*}(async () => {
   const tcsData = await getStockMidPrices("TCS", "NSE");
   console.log("TCS 5-min mid prices:", tcsData.fiveMinMidPrices);
   console.log("TCS daily mid prices:", tcsData.dailyMidPrices);
@@ -42,3 +42,4 @@ export async function getStockMidPrices(stockName, exchange = "NSE") {
   console.log("hdfc 5-min mid prices:", hdfcData.fiveMinMidPrices);
   console.log("hdfc daily mid prices:", hdfcData.dailyMidPrices);
 })();
+*/}
