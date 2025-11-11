@@ -1,0 +1,939 @@
+// paperTrader.js - Enhanced Version
+// Complete paper trading engine with fixes and improvements
+
+import fs from "fs/promises";
+
+function round2(x){ return Math.round((x + Number.EPSILON) * 100) / 100; }
+function round4(x){ return Math.round((x + Number.EPSILON) * 10000) / 10000; }
+function nowIso(){ return new Date().toISOString(); }
+let ORDER_ID = 1;
+let TRADE_ID = 1;
+
+export class PaperTrader {
+  /**
+   * Enhanced options:
+   *  initialCash (number) - starting capital
+   *  commissionPct (fraction, e.g., 0.0004) - brokerage fee
+   *  slippagePct (fraction, e.g., 0.0002) - execution slippage
+   *  allowShort (bool) - enable short selling
+   *  minTradeValue (minimum rupee amount) - prevent micro trades
+   *  marginMultiplier (number, e.g., 5) - leverage for intraday
+   *  maxPositionSize (fraction, e.g., 0.2) - max 20% per position
+   */
+  constructor(opts = {}) {
+    this.cash = opts.initialCash ?? 100000;
+    this.initialCash = this.cash;
+    this.commissionPct = opts.commissionPct ?? 0.0005;
+    this.slippagePct = opts.slippagePct ?? 0.0002;
+    this.allowShort = !!opts.allowShort;
+    this.minTradeValue = opts.minTradeValue ?? 100;
+    this.marginMultiplier = opts.marginMultiplier ?? 1; // 1 = no leverage
+    this.maxPositionSize = opts.maxPositionSize ?? 1.0; // 100% default
+    
+    this.positions = {}; // symbol -> { qty, avgPrice, realized, side }
+    this.openOrders = [];
+    this.trades = [];
+    this.equityHistory = [];
+    this.orderBook = {};
+    
+    // NEW: Tracking metrics
+    this.metrics = {
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      largestWin: 0,
+      largestLoss: 0,
+      totalCommission: 0,
+      totalSlippage: 0
+    };
+  }
+
+  /* ==================== ORDER PLACEMENT ==================== */
+
+  placeMarketOrder(symbol, side, qty, priceProvider, opts = {}) {
+    const { price, time } = this._resolvePriceFromProvider(priceProvider);
+    
+    // Validate order
+    const validation = this._validateOrder(symbol, side, qty, price);
+    if (!validation.valid) {
+      throw new Error(`Market order validation failed: ${validation.reason}`);
+    }
+    
+    // Check position size limits
+    if (!this._checkPositionSizeLimit(symbol, side, qty, price)) {
+      throw new Error(`Position size would exceed ${this.maxPositionSize * 100}% limit`);
+    }
+    
+    return this._executeFill({
+      type: "MARKET",
+      symbol,
+      side,
+      qty,
+      fillPrice: this._applySlippage(price, side),
+      orderOpts: opts
+    }, time);
+  }
+
+  placeLimitOrder(symbol, side, qty, limitPrice, timeNow = nowIso(), opts = {}) {
+    // Validate limit price
+    if (limitPrice <= 0) throw new Error("Limit price must be > 0");
+    
+    const id = ORDER_ID++;
+    const order = {
+      id,
+      symbol,
+      type: "LIMIT",
+      side,
+      qty,
+      limitPrice: round2(limitPrice),
+      time: timeNow,
+      attached: opts.attached || {},
+      status: "PENDING"
+    };
+    
+    this.openOrders.push(order);
+    this.orderBook[id] = order;
+    return order;
+  }
+
+  placeStopOrder(symbol, side, qty, stopPrice, timeNow = nowIso(), opts = {}) {
+    if (stopPrice <= 0) throw new Error("Stop price must be > 0");
+    
+    const id = ORDER_ID++;
+    const order = {
+      id,
+      symbol,
+      type: "STOP",
+      side,
+      qty,
+      stopPrice: round2(stopPrice),
+      triggered: false,
+      time: timeNow,
+      attached: opts.attached || {},
+      status: "PENDING"
+    };
+    
+    this.openOrders.push(order);
+    this.orderBook[id] = order;
+    return order;
+  }
+
+  // NEW: Bracket Order (Entry + SL + Target)
+  placeBracketOrder(symbol, side, qty, entryPrice, stopLoss, target, timeNow = nowIso()) {
+    const entryOrder = this.placeLimitOrder(symbol, side, qty, entryPrice, timeNow);
+    
+    // Attach SL and Target as child orders
+    const oppositeSide = side === "BUY" ? "SELL" : "BUY";
+    const slOrder = this.placeStopOrder(symbol, oppositeSide, qty, stopLoss, timeNow, {
+      attached: { parentId: entryOrder.id, type: "SL" }
+    });
+    const tpOrder = this.placeLimitOrder(symbol, oppositeSide, qty, target, timeNow, {
+      attached: { parentId: entryOrder.id, type: "TP" }
+    });
+    
+    return { entry: entryOrder, sl: slOrder, tp: tpOrder };
+  }
+
+  cancelOrder(orderId) {
+    const idx = this.openOrders.findIndex(o => o.id === orderId);
+    if (idx >= 0) {
+      const [removed] = this.openOrders.splice(idx, 1);
+      removed.status = "CANCELLED";
+      delete this.orderBook[orderId];
+      return removed;
+    }
+    return null;
+  }
+
+  // NEW: Cancel all orders for a symbol
+  cancelAllOrders(symbol = null) {
+    const toCancel = symbol 
+      ? this.openOrders.filter(o => o.symbol === symbol)
+      : this.openOrders.slice();
+    
+    toCancel.forEach(o => this.cancelOrder(o.id));
+    return toCancel.length;
+  }
+
+  /* ==================== POSITION MANAGEMENT ==================== */
+
+  attachSlTpToPosition(symbol, slPrice = null, tpPrice = null) {
+    const pos = this.positions[symbol];
+    if (!pos || pos.qty === 0) throw new Error("No position to attach SL/TP");
+    
+    const out = [];
+    const absQty = Math.abs(pos.qty);
+    const isLong = pos.qty > 0;
+    
+    if (slPrice) {
+      // Long: SELL stop below entry | Short: BUY stop above entry
+      const side = isLong ? "SELL" : "BUY";
+      out.push(this.placeStopOrder(symbol, side, absQty, slPrice, nowIso(), {
+        attached: { forPosition: true, type: "SL" }
+      }));
+    }
+    
+    if (tpPrice) {
+      const side = isLong ? "SELL" : "BUY";
+      out.push(this.placeLimitOrder(symbol, side, absQty, tpPrice, nowIso(), {
+        attached: { forPosition: true, type: "TP" }
+      }));
+    }
+    
+    return out;
+  }
+
+  // NEW: Close position at market price
+  closePosition(symbol, priceProvider, partial = 1.0) {
+    const pos = this.positions[symbol];
+    if (!pos || pos.qty === 0) throw new Error(`No position in ${symbol} to close`);
+    
+    const closeQty = Math.floor(Math.abs(pos.qty) * partial);
+    if (closeQty === 0) throw new Error("Close quantity is zero");
+    
+    const side = pos.qty > 0 ? "SELL" : "BUY";
+    return this.placeMarketOrder(symbol, side, closeQty, priceProvider);
+  }
+
+  // NEW: Close all positions
+  closeAllPositions(priceMap) {
+    const results = [];
+    for (const symbol of Object.keys(this.positions)) {
+      if (priceMap[symbol]) {
+        try {
+          results.push(this.closePosition(symbol, priceMap[symbol]));
+        } catch (e) {
+          console.warn(`Failed to close ${symbol}:`, e.message);
+        }
+      }
+    }
+    return results;
+  }
+
+  /* ==================== POSITION SIZING ==================== */
+
+  async sizeByPercentOfEquity(percent, symbol, priceProvider) {
+    const { price } = this._resolvePriceFromProvider(priceProvider);
+    const equity = await this.getEquity();
+    const allocatedMoney = equity * (percent / 100);
+    const qty = Math.floor(allocatedMoney / price);
+    return qty;
+  }
+
+  async sizeByRisk(symbol, entryPrice, stopPrice, riskRupees, priceProvider = null) {
+    const entry = priceProvider 
+      ? this._resolvePriceFromProvider(priceProvider).price 
+      : entryPrice;
+    
+    const perShareRisk = Math.abs(entry - stopPrice);
+    if (perShareRisk <= 0) throw new Error("Stop price equals entry price - no risk defined");
+    
+    const qty = Math.floor(riskRupees / perShareRisk);
+    return Math.max(qty, 1); // At least 1 share
+  }
+
+  // NEW: Kelly Criterion sizing (requires win rate and avg win/loss)
+  kellySize(winRate, avgWin, avgLoss, equity, price) {
+    const b = avgWin / avgLoss; // win/loss ratio
+    const p = winRate; // probability of win
+    const q = 1 - p; // probability of loss
+    
+    const kellyPct = (b * p - q) / b;
+    const safePct = Math.max(0, Math.min(kellyPct * 0.5, 0.25)); // Half-Kelly, max 25%
+    
+    const allocatedMoney = equity * safePct;
+    return Math.floor(allocatedMoney / price);
+  }
+
+  /* ==================== TICK PROCESSING ==================== */
+
+  processTick(symbol, price, time = nowIso()) {
+    if (price <= 0) {
+      console.warn(`Invalid price ${price} for ${symbol}`);
+      return;
+    }
+    
+    const toRemove = [];
+    
+    // 1) Process STOP orders (trigger and convert to market)
+    for (const order of [...this.openOrders]) {
+      if (order.symbol !== symbol || order.type !== "STOP") continue;
+      
+      let shouldTrigger = false;
+      if (order.side === "BUY" && price >= order.stopPrice) {
+        shouldTrigger = true;
+      } else if (order.side === "SELL" && price <= order.stopPrice) {
+        shouldTrigger = true;
+      }
+      
+      if (shouldTrigger) {
+        order.triggered = true;
+        order.status = "TRIGGERED";
+        try {
+          this._executeFill({
+            type: "STOP->MARKET",
+            symbol,
+            side: order.side,
+            qty: order.qty,
+            fillPrice: this._applySlippage(price, order.side),
+            orderId: order.id
+          }, time);
+          toRemove.push(order.id);
+        } catch (e) {
+          console.warn(`Stop order ${order.id} execution failed:`, e.message);
+          order.status = "FAILED";
+          toRemove.push(order.id);
+        }
+      }
+    }
+    
+    // Remove triggered stops
+    for (const id of toRemove) {
+      this.cancelOrder(id);
+    }
+    
+    // 2) Process LIMIT orders
+    for (const order of [...this.openOrders]) {
+      if (order.symbol !== symbol || order.type !== "LIMIT") continue;
+      
+      let shouldFill = false;
+      if (order.side === "BUY" && price <= order.limitPrice) {
+        shouldFill = true;
+      } else if (order.side === "SELL" && price >= order.limitPrice) {
+        shouldFill = true;
+      }
+      
+      if (shouldFill) {
+        try {
+          this._executeFill({
+            ...order,
+            fillPrice: this._applySlippage(order.limitPrice, order.side),
+            orderId: order.id
+          }, time);
+          order.status = "FILLED";
+          this.cancelOrder(order.id);
+        } catch (e) {
+          console.warn(`Limit order ${order.id} execution failed:`, e.message);
+          order.status = "FAILED";
+        }
+      }
+    }
+    
+    // 3) Record equity snapshot
+    this._recordEquityPoint(time, symbol, price);
+  }
+
+  /* ==================== EXECUTION ENGINE ==================== */
+
+  _executeFill(exec, time = nowIso()) {
+    const { symbol, side, qty } = exec;
+    const fillPrice = round2(exec.fillPrice);
+    
+    if (qty <= 0) throw new Error("Quantity must be > 0");
+    
+    const tradeValue = round2(fillPrice * qty);
+    const commission = round2(Math.abs(tradeValue) * this.commissionPct);
+    const slippageCost = round2(Math.abs(tradeValue) * this.slippagePct);
+    
+    // Update metrics
+    this.metrics.totalCommission += commission;
+    this.metrics.totalSlippage += slippageCost;
+    
+    if (side === "BUY") {
+      return this._executeBuy(symbol, qty, fillPrice, commission, slippageCost, time, exec);
+    } else if (side === "SELL") {
+      return this._executeSell(symbol, qty, fillPrice, commission, slippageCost, time, exec);
+    } else {
+      throw new Error(`Unknown side: ${side}`);
+    }
+  }
+
+  _executeBuy(symbol, qty, fillPrice, commission, slippageCost, time, exec) {
+    const tradeValue = round2(fillPrice * qty);
+    const totalCost = round2(tradeValue + commission + slippageCost);
+    
+    // Apply margin multiplier for buying power
+    const requiredCash = round2(totalCost / this.marginMultiplier);
+    
+    if (this.cash < requiredCash) {
+      throw new Error(`Insufficient cash. Need ${requiredCash}, have ${round2(this.cash)}`);
+    }
+    
+    const pos = this.positions[symbol];
+    
+    if (!pos || pos.qty === 0) {
+      // New long position
+      this.positions[symbol] = {
+        qty,
+        avgPrice: fillPrice,
+        realized: 0,
+        side: "LONG"
+      };
+    } else if (pos.qty > 0) {
+      // Adding to long position
+      const newQty = pos.qty + qty;
+      const newAvg = ((pos.avgPrice * pos.qty) + (fillPrice * qty)) / newQty;
+      pos.qty = newQty;
+      pos.avgPrice = round2(newAvg);
+    } else if (pos.qty < 0) {
+      // Covering short position
+      const coverQty = Math.min(qty, Math.abs(pos.qty));
+      const pnl = round2((pos.avgPrice - fillPrice) * coverQty); // Short P&L is reversed
+      pos.realized = round2((pos.realized || 0) + pnl);
+      pos.qty += coverQty;
+      
+      // Update metrics
+      this._updateTradeMetrics(pnl);
+      
+      if (pos.qty === 0) {
+        pos.side = null;
+      }
+      
+      // If buying more than the short, create long position
+      const remainingQty = qty - coverQty;
+      if (remainingQty > 0) {
+        pos.qty = remainingQty;
+        pos.avgPrice = fillPrice;
+        pos.side = "LONG";
+      }
+    }
+    
+    this.cash = round2(this.cash - requiredCash);
+    
+    return this._recordTrade({
+      symbol,
+      side: "BUY",
+      qty,
+      price: fillPrice,
+      commission,
+      slippageCost,
+      time,
+      orderId: exec.orderId
+    });
+  }
+
+  _executeSell(symbol, qty, fillPrice, commission, slippageCost, time, exec) {
+    const pos = this.positions[symbol];
+    const tradeValue = round2(fillPrice * qty);
+    
+    // Check if we have the position to sell (or allow short)
+    if (!pos || pos.qty === 0) {
+      // No position - initiating short
+      if (!this.allowShort) {
+        throw new Error(`Cannot short ${symbol} - shorting not allowed`);
+      }
+      this.positions[symbol] = {
+        qty: -qty,
+        avgPrice: fillPrice,
+        realized: 0,
+        side: "SHORT"
+      };
+      
+      // Short proceeds (margin requirement applies)
+      const proceeds = round2(tradeValue - commission - slippageCost);
+      const netProceeds = round2(proceeds / this.marginMultiplier);
+      this.cash = round2(this.cash + netProceeds);
+      
+    } else if (pos.qty > 0) {
+      // Closing/reducing long position
+      if (pos.qty < qty && !this.allowShort) {
+        throw new Error(`Not enough qty to sell: have ${pos.qty}, trying to sell ${qty}`);
+      }
+      
+      const sellQty = Math.min(qty, pos.qty);
+      const pnl = round2((fillPrice - pos.avgPrice) * sellQty);
+      pos.realized = round2((pos.realized || 0) + pnl);
+      pos.qty -= sellQty;
+      
+      // Update metrics
+      this._updateTradeMetrics(pnl);
+      
+      const netProceeds = round2(tradeValue - commission - slippageCost);
+      this.cash = round2(this.cash + netProceeds);
+      
+      if (pos.qty === 0) {
+        pos.side = null;
+      }
+      
+      // If selling more than the position (going short)
+      const remainingQty = qty - sellQty;
+      if (remainingQty > 0 && this.allowShort) {
+        pos.qty = -remainingQty;
+        pos.avgPrice = fillPrice;
+        pos.side = "SHORT";
+      }
+      
+    } else if (pos.qty < 0) {
+      // Adding to short position
+      const newQty = pos.qty - qty;
+      const newAvg = ((pos.avgPrice * Math.abs(pos.qty)) + (fillPrice * qty)) / Math.abs(newQty);
+      pos.qty = newQty;
+      pos.avgPrice = round2(newAvg);
+      
+      const proceeds = round2(tradeValue - commission - slippageCost);
+      const netProceeds = round2(proceeds / this.marginMultiplier);
+      this.cash = round2(this.cash + netProceeds);
+    }
+    
+    // Clean up zero positions
+    if (pos && pos.qty === 0) {
+      delete this.positions[symbol];
+    }
+    
+    return this._recordTrade({
+      symbol,
+      side: "SELL",
+      qty,
+      price: fillPrice,
+      commission,
+      slippageCost,
+      time,
+      orderId: exec.orderId
+    });
+  }
+
+  _recordTrade({ symbol, side, qty, price, commission = 0, slippageCost = 0, pnl = 0, time = nowIso(), orderId = null }) {
+    const trade = {
+      id: TRADE_ID++,
+      orderId,
+      time,
+      symbol,
+      side,
+      qty,
+      price: round2(price),
+      value: round2(price * qty),
+      commission: round2(commission),
+      slippage: round2(slippageCost),
+      pnl: round2(pnl ?? 0)
+    };
+    
+    this.trades.push(trade);
+    this.metrics.totalTrades++;
+    
+    return trade;
+  }
+
+  /* ==================== VALIDATION ==================== */
+
+  _validateOrder(symbol, side, qty, price) {
+    if (!symbol || symbol.length === 0) {
+      return { valid: false, reason: "Invalid symbol" };
+    }
+    
+    if (qty <= 0 || !Number.isInteger(qty)) {
+      return { valid: false, reason: "Quantity must be positive integer" };
+    }
+    
+    if (price <= 0) {
+      return { valid: false, reason: "Price must be > 0" };
+    }
+    
+    const tradeValue = price * qty;
+    if (tradeValue < this.minTradeValue) {
+      return { valid: false, reason: `Trade value ${round2(tradeValue)} below minimum ${this.minTradeValue}` };
+    }
+    
+    // Check if we have cash for buy
+    if (side === "BUY") {
+      const totalCost = round2(tradeValue * (1 + this.commissionPct + this.slippagePct));
+      const requiredCash = round2(totalCost / this.marginMultiplier);
+      if (this.cash < requiredCash) {
+        return { valid: false, reason: `Insufficient cash: need ${requiredCash}, have ${round2(this.cash)}` };
+      }
+    }
+    
+    // Check if we can sell
+    if (side === "SELL") {
+      const pos = this.positions[symbol];
+      if (!this.allowShort && (!pos || pos.qty < qty)) {
+        return { valid: false, reason: `Cannot sell ${qty} shares - only have ${pos?.qty || 0}` };
+      }
+    }
+    
+    return { valid: true };
+  }
+
+  _checkPositionSizeLimit(symbol, side, qty, price) {
+    // Calculate what position size would be after this trade
+    const pos = this.positions[symbol];
+    let newQty = qty;
+    
+    if (pos) {
+      if (side === "BUY") {
+        newQty = pos.qty > 0 ? pos.qty + qty : qty;
+      } else {
+        newQty = pos.qty < 0 ? Math.abs(pos.qty) + qty : qty;
+      }
+    }
+    
+    const positionValue = newQty * price;
+    const equity = this.cash; // Simplified check
+    
+    return (positionValue / equity) <= this.maxPositionSize;
+  }
+
+  _applySlippage(price, side) {
+    if (!this.slippagePct) return price;
+    const factor = side === "BUY" ? (1 + this.slippagePct) : (1 - this.slippagePct);
+    return round2(price * factor);
+  }
+
+  _resolvePriceFromProvider(provider) {
+    if (typeof provider === "number") {
+      return { price: provider, time: nowIso() };
+    }
+    if (provider && typeof provider === "object" && provider.price !== undefined) {
+      return { price: Number(provider.price), time: provider.time ?? nowIso() };
+    }
+    if (typeof provider === "function") {
+      const res = provider();
+      return this._resolvePriceFromProvider(res);
+    }
+    throw new Error("Invalid price provider");
+  }
+
+  _updateTradeMetrics(pnl) {
+    if (pnl > 0) {
+      this.metrics.winningTrades++;
+      this.metrics.largestWin = Math.max(this.metrics.largestWin, pnl);
+    } else if (pnl < 0) {
+      this.metrics.losingTrades++;
+      this.metrics.largestLoss = Math.min(this.metrics.largestLoss, pnl);
+    }
+  }
+
+  /* ==================== PORTFOLIO & METRICS ==================== */
+
+  async getEquity(symbolSnapshotProvider) {
+    let unreal = 0;
+    let priceMap = {};
+    
+    if (typeof symbolSnapshotProvider === "function") {
+      priceMap = await symbolSnapshotProvider();
+    } else if (symbolSnapshotProvider && typeof symbolSnapshotProvider === "object") {
+      priceMap = symbolSnapshotProvider;
+    }
+    
+    for (const s of Object.keys(this.positions)) {
+      const p = this.positions[s];
+      const last = priceMap[s];
+      if (last !== undefined && p.qty !== 0) {
+        unreal += (last - p.avgPrice) * p.qty;
+      }
+    }
+    
+    return round2(this.cash + unreal);
+  }
+
+  async getPortfolioSnapshot(latestPrices = {}) {
+    let priceMap = {};
+    if (typeof latestPrices === "function") {
+      priceMap = await latestPrices();
+    } else {
+      priceMap = latestPrices;
+    }
+    
+    const snapshot = {
+      cash: round2(this.cash),
+      initialCash: this.initialCash,
+      positions: [],
+      totalUnrealized: 0,
+      totalRealized: 0,
+      equity: null
+    };
+    
+    for (const s of Object.keys(this.positions)) {
+      const p = this.positions[s];
+      if (p.qty === 0) continue;
+      
+      const last = priceMap[s] ?? null;
+      const unreal = last === null ? null : round2((last - p.avgPrice) * p.qty);
+      
+      snapshot.positions.push({
+        symbol: s,
+        qty: p.qty,
+        side: p.side,
+        avgPrice: round2(p.avgPrice),
+        realized: round2(p.realized || 0),
+        lastPrice: last,
+        unrealized: unreal,
+        value: last ? round2(last * Math.abs(p.qty)) : null
+      });
+      
+      if (unreal !== null) snapshot.totalUnrealized += unreal;
+      snapshot.totalRealized += (p.realized || 0);
+    }
+    
+    snapshot.totalUnrealized = round2(snapshot.totalUnrealized);
+    snapshot.totalRealized = round2(snapshot.totalRealized);
+    snapshot.equity = round2(this.cash + snapshot.totalUnrealized);
+    snapshot.totalPnL = round2(snapshot.totalRealized + snapshot.totalUnrealized);
+    snapshot.returnPct = round4(((snapshot.equity - this.initialCash) / this.initialCash) * 100);
+    
+    return snapshot;
+  }
+
+  getPerformanceMetrics() {
+    const winRate = this.metrics.totalTrades > 0
+      ? round4((this.metrics.winningTrades / this.metrics.totalTrades) * 100)
+      : 0;
+    
+    const avgWin = this.metrics.winningTrades > 0
+      ? round2(this.metrics.largestWin / this.metrics.winningTrades)
+      : 0;
+    
+    const avgLoss = this.metrics.losingTrades > 0
+      ? round2(Math.abs(this.metrics.largestLoss) / this.metrics.losingTrades)
+      : 0;
+    
+    const profitFactor = avgLoss > 0 ? round2(avgWin / avgLoss) : 0;
+    
+    return {
+      totalTrades: this.metrics.totalTrades,
+      winningTrades: this.metrics.winningTrades,
+      losingTrades: this.metrics.losingTrades,
+      winRate: `${winRate}%`,
+      largestWin: round2(this.metrics.largestWin),
+      largestLoss: round2(this.metrics.largestLoss),
+      avgWin,
+      avgLoss,
+      profitFactor,
+      totalCommission: round2(this.metrics.totalCommission),
+      totalSlippage: round2(this.metrics.totalSlippage)
+    };
+  }
+
+  getOpenOrders() {
+    return this.openOrders.slice();
+  }
+
+  getPositions() {
+    return JSON.parse(JSON.stringify(this.positions));
+  }
+
+  getTradeHistory() {
+    return this.trades.slice();
+  }
+
+  _recordEquityPoint(time, symbol, price) {
+    let totalUnreal = 0;
+    
+    for (const s of Object.keys(this.positions)) {
+      const p = this.positions[s];
+      if (p.qty === 0) continue;
+      
+      const last = (s === symbol) ? price : p.avgPrice;
+      totalUnreal += (last - p.avgPrice) * p.qty;
+    }
+    
+    const equity = round2(this.cash + totalUnreal);
+    this.equityHistory.push({ time, equity });
+  }
+
+  /* ==================== PERSISTENCE ==================== */
+
+  async saveState(filePath) {
+    const state = {
+      cash: this.cash,
+      initialCash: this.initialCash,
+      commissionPct: this.commissionPct,
+      slippagePct: this.slippagePct,
+      allowShort: this.allowShort,
+      marginMultiplier: this.marginMultiplier,
+      maxPositionSize: this.maxPositionSize,
+      positions: this.positions,
+      openOrders: this.openOrders,
+      trades: this.trades,
+      equityHistory: this.equityHistory,
+      metrics: this.metrics
+    };
+    await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
+    return true;
+  }
+
+  async loadState(filePath) {
+    const raw = await fs.readFile(filePath, "utf8");
+    const state = JSON.parse(raw);
+    
+    this.cash = state.cash;
+    this.initialCash = state.initialCash;
+    this.commissionPct = state.commissionPct;
+    this.slippagePct = state.slippagePct;
+    this.allowShort = state.allowShort;
+    this.marginMultiplier = state.marginMultiplier || 1;
+    this.maxPositionSize = state.maxPositionSize || 1.0;
+    this.positions = state.positions;
+    this.openOrders = state.openOrders;
+    this.trades = state.trades;
+    this.equityHistory = state.equityHistory;
+    this.metrics = state.metrics || {
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      largestWin: 0,
+      largestLoss: 0,
+      totalCommission: 0,
+      totalSlippage: 0
+    };
+    
+    // Rebuild order book
+    this.orderBook = {};
+    for (const order of this.openOrders) {
+      this.orderBook[order.id] = order;
+    }
+    
+    return true;
+  }
+
+  /* ==================== REPORTING ==================== */
+
+  generateTradeReport() {
+    if (this.trades.length === 0) {
+      return "No trades executed yet.";
+    }
+
+    const lines = [];
+    lines.push("=".repeat(80));
+    lines.push("TRADE HISTORY REPORT");
+    lines.push("=".repeat(80));
+    lines.push("");
+    
+    this.trades.forEach(t => {
+      lines.push(`Trade #${t.id} | ${t.time}`);
+      lines.push(`  ${t.side} ${t.qty} x ${t.symbol} @ ₹${t.price}`);
+      lines.push(`  Value: ₹${t.value} | Commission: ₹${t.commission} | Slippage: ₹${t.slippage}`);
+      if (t.pnl !== 0) {
+        lines.push(`  P&L: ₹${t.pnl} ${t.pnl > 0 ? '📈' : '📉'}`);
+      }
+      lines.push("");
+    });
+
+    const metrics = this.getPerformanceMetrics();
+    lines.push("=".repeat(80));
+    lines.push("PERFORMANCE METRICS");
+    lines.push("=".repeat(80));
+    lines.push(`Total Trades: ${metrics.totalTrades}`);
+    lines.push(`Win Rate: ${metrics.winRate}`);
+    lines.push(`Winning Trades: ${metrics.winningTrades} | Losing Trades: ${metrics.losingTrades}`);
+    lines.push(`Largest Win: ₹${metrics.largestWin} | Largest Loss: ₹${metrics.largestLoss}`);
+    lines.push(`Profit Factor: ${metrics.profitFactor}`);
+    lines.push(`Total Commission Paid: ₹${metrics.totalCommission}`);
+    lines.push(`Total Slippage Cost: ₹${metrics.totalSlippage}`);
+    lines.push("=".repeat(80));
+
+    return lines.join("\n");
+  }
+
+  async generatePortfolioReport(latestPrices = {}) {
+    const snapshot = await this.getPortfolioSnapshot(latestPrices);
+    
+    const lines = [];
+    lines.push("=".repeat(80));
+    lines.push("PORTFOLIO SNAPSHOT");
+    lines.push("=".repeat(80));
+    lines.push("");
+    lines.push(`Cash: ₹${snapshot.cash}`);
+    lines.push(`Initial Capital: ₹${snapshot.initialCash}`);
+    lines.push(`Current Equity: ₹${snapshot.equity}`);
+    lines.push(`Total Return: ₹${round2(snapshot.equity - snapshot.initialCash)} (${snapshot.returnPct}%)`);
+    lines.push("");
+    lines.push(`Total Realized P&L: ₹${snapshot.totalRealized}`);
+    lines.push(`Total Unrealized P&L: ₹${snapshot.totalUnrealized}`);
+    lines.push(`Total P&L: ₹${snapshot.totalPnL}`);
+    lines.push("");
+    lines.push("-".repeat(80));
+    lines.push("OPEN POSITIONS");
+    lines.push("-".repeat(80));
+    
+    if (snapshot.positions.length === 0) {
+      lines.push("No open positions.");
+    } else {
+      snapshot.positions.forEach(p => {
+        lines.push(`${p.symbol} | ${p.side || 'FLAT'}`);
+        lines.push(`  Qty: ${p.qty} @ Avg ₹${p.avgPrice}`);
+        if (p.lastPrice) {
+          lines.push(`  Current: ₹${p.lastPrice} | Value: ₹${p.value}`);
+          lines.push(`  Unrealized P&L: ₹${p.unrealized} ${p.unrealized >= 0 ? '✅' : '❌'}`);
+        }
+        if (p.realized !== 0) {
+          lines.push(`  Realized P&L: ₹${p.realized}`);
+        }
+        lines.push("");
+      });
+    }
+    
+    lines.push("-".repeat(80));
+    lines.push("OPEN ORDERS");
+    lines.push("-".repeat(80));
+    
+    if (this.openOrders.length === 0) {
+      lines.push("No open orders.");
+    } else {
+      this.openOrders.forEach(o => {
+        lines.push(`Order #${o.id} | ${o.type} | ${o.side} ${o.qty} x ${o.symbol}`);
+        if (o.limitPrice) lines.push(`  Limit Price: ₹${o.limitPrice}`);
+        if (o.stopPrice) lines.push(`  Stop Price: ₹${o.stopPrice}`);
+        lines.push(`  Status: ${o.status || 'PENDING'}`);
+        lines.push("");
+      });
+    }
+    
+    lines.push("=".repeat(80));
+    
+    return lines.join("\n");
+  }
+}
+
+/* ==================== DEMO USAGE ==================== */
+
+// Uncomment to test:
+
+(async () => {
+  console.log("=== Paper Trading Demo ===\n");
+  
+  const trader = new PaperTrader({
+    initialCash: 100000,
+    commissionPct: 0.0005,
+    slippagePct: 0.0002,
+    allowShort: true,
+    maxPositionSize: 0.3, // Max 30% per position
+    minTradeValue: 500
+  });
+
+  // 1. Buy RELIANCE
+  console.log("1. Buying 10 RELIANCE @ 1490");
+  const buy1 = trader.placeMarketOrder("RELIANCE", "BUY", 10, 1490);
+  console.log("Trade executed:", buy1);
+  
+  // 2. Place a limit sell order
+  console.log("\n2. Placing limit sell order at 1510");
+  trader.placeLimitOrder("RELIANCE", "SELL", 5, 1510);
+  
+  // 3. Attach SL/TP to position
+  console.log("\n3. Attaching SL @ 1470 and TP @ 1520");
+  trader.attachSlTpToPosition("RELIANCE", 1470, 1520);
+  
+  // 4. Process some ticks
+  console.log("\n4. Processing market ticks...");
+  trader.processTick("RELIANCE", 1500, nowIso());
+  console.log("Tick @ 1500 - no fills yet");
+  
+  trader.processTick("RELIANCE", 1510, nowIso());
+  console.log("Tick @ 1510 - limit order should fill!");
+  
+  trader.processTick("RELIANCE", 1520, nowIso());
+  console.log("Tick @ 1520 - TP should fill!");
+  
+  // 5. Show portfolio
+  console.log("\n" + await trader.generatePortfolioReport({ RELIANCE: 1520 }));
+  
+  // 6. Show trade history
+  console.log("\n" + trader.generateTradeReport());
+  
+  // 7. Performance metrics
+  console.log("\nPerformance:", trader.getPerformanceMetrics());
+  
+  // 8. Save state
+  await trader.saveState("./paper_trade_state.json");
+  console.log("\n✅ State saved to paper_trade_state.json");
+})();
