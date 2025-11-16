@@ -1024,7 +1024,7 @@ export class PaperTrader {
     
     if (this.openOrders.length === 0) {
       lines.push("No open orders.");
-    } else {
+    } else { 
       this.openOrders.forEach(o => {
         lines.push(`Order #${o.id} | ${o.type} | ${o.side} ${o.qty} x ${o.symbol}`);
         if (o.limitPrice) lines.push(`  Limit Price: ₹${o.limitPrice}`);
