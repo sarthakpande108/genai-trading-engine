@@ -1,13 +1,59 @@
-// testPaperTrader.js
+// testPaperTrader_LiveOnce.js
+import dotenv from "dotenv";
+dotenv.config();
+
 import { PaperTrader } from "./papertrading.js";
+import { getLastTradedPrice } from "./livedataGPT.js";
 
+import chalk from "chalk";
+import Table from "cli-table3";
 
-function nowIso() {
-  return new Date().toISOString();
+function nowIso() { return new Date().toISOString(); }
+
+function renderTerminalDashboard(trader, priceMap) {
+  if (!trader || !priceMap || Object.keys(priceMap).length === 0) return;
+  const positions = trader.getPositions();
+  if (!positions || Object.keys(positions).length === 0) return;
+
+  console.clear();
+  console.log(chalk.bold.blue("📊 REAL-TIME PAPER TRADING DASHBOARD\n"));
+
+  let unrealTotal = 0;
+
+  const table = new Table({
+    head: ["Symbol", "Qty", "Avg Price", "LTP", "Unrealized P&L", "Side"],
+    style: { head: ['yellow'] },
+  });
+
+  Object.keys(positions).forEach(symbol => {
+    const pos = positions[symbol];
+    const price = priceMap[symbol];
+    if (!price) return;
+
+    const pnl = (price - pos.avgPrice) * pos.qty;
+    unrealTotal += pnl;
+
+    table.push([
+      symbol,
+      pos.qty,
+      "₹" + pos.avgPrice.toFixed(2),
+      "₹" + price.toFixed(2),
+      pnl >= 0 ? chalk.green("₹" + pnl.toFixed(2)) : chalk.red("₹" + pnl.toFixed(2)),
+      pos.side
+    ]);
+  });
+
+  console.log(table.toString());
+  console.log(
+    `\n💰 Cash: ${chalk.cyan("₹" + trader.cash.toFixed(2))} | ` +
+    `📈 Equity: ${chalk.green("₹" + (trader.cash + unrealTotal).toFixed(2))}`
+  );
+
+  console.log(`⏱ Updated: ${new Date().toLocaleTimeString()}`);
 }
 
 (async () => {
-  console.log("=== 🧠 PaperTrader Test Start ===");
+  console.log("=== 🧠 PaperTrader LIVE Test Start ===");
 
   const trader = new PaperTrader({
     initialCash: 100000,
@@ -17,50 +63,40 @@ function nowIso() {
     maxPositionSize: 0.5,
   });
   trader.reset();
-
   console.log("\n💰 Starting Cash:", trader.cash);
 
-  // 1️⃣ BUY 10 RELIANCE @ 2500
-  console.log("\n=== 1. Buying 10 RELIANCE @ ₹2500 ===");
-  const buy1 = trader.placeMarketOrder("RELIANCE", "BUY", 10, 2500);
-  console.log("Trade executed:", buy1);
-  console.log("Current positions:", trader.getPositions());
-  console.log("Cash after buy:", trader.cash);
+  const REL_PRICE = await getLastTradedPrice("RELIANCE-EQ", "NSE");
+  const TCS_PRICE = await getLastTradedPrice("TCS-EQ", "NSE");
+  if (!REL_PRICE || !TCS_PRICE) return console.log("❌ Live price failed");
 
-  // 2️⃣ BUY 5 TCS @ 3800
-  console.log("\n=== 2. Buying 5 TCS @ ₹3800 ===");
-  const buy2 = trader.placeMarketOrder("TCS", "BUY", 5, 3800);
-  console.log("Trade executed:", buy2);
-  console.log("Current positions:", trader.getPositions());
-  console.log("Cash after buy:", trader.cash);
+  console.log("\nLIVE Prices:");
+  console.log(`RELIANCE ₹${REL_PRICE}`);
+  console.log(`TCS ₹${TCS_PRICE}`);
 
-  // 3️⃣ SELL 5 RELIANCE @ 2520
-  console.log("\n=== 3. Selling 5 RELIANCE @ ₹2520 ===");
-  const sell1 = trader.placeMarketOrder("RELIANCE", "SELL", 5, 2520);
-  console.log("Trade executed:", sell1);
-  console.log("Current positions:", trader.getPositions());
-  console.log("Cash after sell:", trader.cash);
+  console.log(`\n=== 1. Buying 10 RELIANCE @ ₹${REL_PRICE} ===`);
+  trader.placeMarketOrder("RELIANCE", "BUY", 25, 1510);
 
-  // 4️⃣ Simulate price movement (tick updates)
-  console.log("\n📈 Processing ticks...");
-  trader.processTick("RELIANCE", 2530, nowIso());
-  trader.processTick("TCS", 3820, nowIso());
+  console.log(`\n=== 2. Buying 5 TCS @ ₹${TCS_PRICE} ===`);
+  trader.placeMarketOrder("TCS", "BUY", 10, 3100);
 
-  // 5️⃣ Portfolio snapshot
-  const snapshot = await trader.getPortfolioSnapshot({
-    RELIANCE: 2530,
-    TCS: 3820,
+  const REL_PRICE2 = await getLastTradedPrice("RELIANCE-EQ", "NSE");
+  console.log(`\n=== 3. Selling 5 RELIANCE @ ₹${REL_PRICE2} ===`);
+  trader.placeMarketOrder("RELIANCE", "SELL", 5, REL_PRICE2);
+
+  trader.processTick("RELIANCE", REL_PRICE2, nowIso());
+  trader.processTick("TCS", TCS_PRICE, nowIso());
+
+  // 🟦 NOW PROPER DASHBOARD CALL
+  renderTerminalDashboard(trader, {
+    RELIANCE: REL_PRICE2,
+    TCS: TCS_PRICE
   });
-  console.log("\n=== 📊 Portfolio Snapshot ===");
-  console.log(snapshot);
 
-  // 6️⃣ Performance report
-  console.log("\n=== 📈 Performance Metrics ===");
-  console.log(trader.getPerformanceMetrics());
-
-  // 7️⃣ Trade history
   console.log("\n=== 🧾 Trade History ===");
   console.log(trader.getTradeHistory());
 
-  console.log("\n=== ✅ PaperTrader Test Complete ===");
+  console.log("\n=== 📈 Metrics ===");
+  console.log(trader.getPerformanceMetrics());
+
+  console.log("\n=== ✅ PaperTrader LIVE Test Complete ===");
 })();
