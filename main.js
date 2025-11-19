@@ -3,44 +3,53 @@ import { SmartAPI } from "smartapi-javascript";
 import speakeasy from "speakeasy";
 import { config } from "./config.js";
 
-let globalSession = null; // ✅ cache session globally
+let globalSession = null;
 
-export const smartConnect = async () => {
+export async function smartConnect() {
   try {
-    // ✅ If already logged in and token is valid, reuse it
-    if (globalSession && globalSession.accessToken) {
+    if (globalSession && globalSession.accessToken && globalSession.feedToken && globalSession.clientCode) {
       return globalSession;
     }
 
     const smart_api = new SmartAPI({ api_key: config.apiKey });
+    const totp = speakeasy.totp({ secret: config.totpSecret, encoding: "base32" });
 
-    const totp = speakeasy.totp({
-      secret: config.totpSecret,
-      encoding: "base32",
-    });
+    console.log("🔐 Attempting login…");
+
+    // Decide whether to use MPIN or password
+    const credential = config.mpin || config.password;
+    if (!credential) {
+      throw new Error("No mpin or password provided in config");
+    }
 
     const session = await smart_api.generateSession(
       config.clientCode,
-      config.mpin,
+      credential,
       totp
     );
 
-    if (!session || !session.data) {
-      console.error("⚠️ Unexpected response structure. Login might have failed partially.");
-      return null;
+    const jwtToken = session?.data?.jwtToken;
+    const feedToken = session?.data?.feedToken;
+    const clientCode = config.clientCode;
+
+    if (!jwtToken || !feedToken || !clientCode) {
+      console.error("❌ Login failed - API did not return required tokens");
+      console.log("🔍 Raw Response:", session);
+      throw new Error("Invalid session response");
     }
 
-    console.log("✅ Login Successful!");
-    config.feedToken = session.data.feedToken;
-    config.accessToken = session.data.jwtToken;
+    console.log("✅ Login successful!");
 
-    // ✅ Store for reuse
-    globalSession = { smart_api, accessToken: session.data.jwtToken };
-
+    globalSession = {
+      smart_api,
+      accessToken: jwtToken,
+      feedToken,
+      clientCode,
+    };
     return globalSession;
-  } catch (error) {
-    console.error("❌ Login failed:", error);
-    return null;
-  }
-};
 
+  } catch (err) {
+    console.error("❌ Login error:", err.message);
+    throw err;
+  }
+}
