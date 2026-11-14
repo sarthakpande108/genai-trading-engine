@@ -22,15 +22,14 @@ export function buildMarketContext({ benchmarkCandles, sectorCandles, benchmarkN
     if (!rows) return null;
     const candles = normalizeCandles(rows, label);
     const first = candles[0], last = candles.at(-1);
-    const fiveSessionBase = candles[Math.max(0, candles.length - 6)];
+    const fiveSessionBase = candles.length >= 6 ? candles.at(-6) : null;
     const high = Math.max(...candles.map((c) => c.high));
     const low = Math.min(...candles.map((c) => c.low));
     return {
       name, candleCount: candles.length, latestTimestamp: last.timestamp,
       latestClose: last.close,
-      changePct: ((last.close / first.close) - 1) * 100,
-      change5SessionsPct: ((last.close / fiveSessionBase.close) - 1) * 100,
-      change20SessionsPct: ((last.close / first.close) - 1) * 100,
+      change5SessionsPct: fiveSessionBase ? ((last.close / fiveSessionBase.close) - 1) * 100 : null,
+      changeWindowPct: ((last.close / first.close) - 1) * 100,
       recentHigh: high, recentLow: low,
       positionInRangePct: high === low ? 50 : ((last.close - low) / (high - low)) * 100,
       recentCandles: candles.slice(-10),
