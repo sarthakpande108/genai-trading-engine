@@ -52,7 +52,7 @@ export async function analyzeStock({
     try {
       resolvedNews = await fetchStockNews({
         query: newsQuery || (companyName ? `"${companyName}" OR ${symbol}` : symbol),
-        apiKey: newsApiKey, fetchImpl: newsFetchImpl || fetchImpl,
+        apiKey: newsApiKey, fetchImpl: newsFetchImpl || globalThis.fetch,
         pageSize: 12,
         from: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
         timeoutMs,
