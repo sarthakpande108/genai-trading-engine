@@ -32,10 +32,13 @@ test("news normalizer keeps source, title, URL and valid publication time", () =
   assert.equal(items[0].url, "https://example.com/a");
 });
 
-const hasDatabase = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
-test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", { skip: !hasDatabase }, async () => {
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+// Never fall back to DATABASE_URL here: this test inserts and deletes records.
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", { skip: !testDatabaseUrl }, async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = testDatabaseUrl;
   const { query, closeDatabase } = await import("../db.js");
+  let savedId;
   try {
     const { rows } = await query("SELECT to_regclass('public.predictions') AS predictions, to_regclass('public.prediction_outcomes') AS outcomes");
     assert.ok(rows[0].predictions, "run npm run db:migrate before database integration tests");
@@ -44,6 +47,7 @@ test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", 
     const input = { symbol: "TEST_NEON", exchange: "NSE", daily: { latestCandle: { timestamp: history[0][0], close: history[0][4] } } };
     const analysis = { outlook: "BULLISH", directionalProbabilityPct: 65, confidenceLabel: "MEDIUM" };
     const saved = await recordPrediction({ analysis, input });
+    savedId = saved.id;
     assert.ok(saved.id);
     const result = await evaluatePendingPredictions({ fetchDailyCandles: async () => history });
     assert.ok(result.updatedPredictionIds.includes(saved.id));
@@ -52,8 +56,10 @@ test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", 
     assert.equal(record.outcomes[1].actualClose, history[1][4]);
     assert.equal(record.outcomes[3].actualClose, history[3][4]);
     assert.equal(record.outcomes[5].actualClose, history[5][4]);
-    await query("DELETE FROM predictions WHERE id = $1", [saved.id]);
   } finally {
+    if (savedId) await query("DELETE FROM predictions WHERE id = $1", [savedId]);
     await closeDatabase();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
   }
 });
