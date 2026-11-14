@@ -27,6 +27,8 @@ const validAnalysis = {
   risks: ["Only a short recent sample is supplied."],
   scenario: "Continuation is possible while support holds.",
   dataLimitations: ["No fundamentals or news included."],
+  marketContextAnalysis: "No benchmark context supplied.",
+  newsAnalysis: "No news articles supplied.",
 };
 
 test("stock payload includes daily and five-minute OHLCV and indicator snapshots", () => {
