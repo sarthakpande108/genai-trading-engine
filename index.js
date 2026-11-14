@@ -17,3 +17,8 @@ export { createExecutionAdapter } from "./execution.js";
 
 export { buildStockAnalysisPayload, analyzeStockDataWithGemini } from "./gemini-analysis.js";
 export { analyzeStock } from "./stock-analysis.js";
+
+export { buildMarketContext } from "./market-context.js";
+export { fetchStockNews, normalizeNewsArticles } from "./news.js";
+export { recordPrediction, evaluatePendingPredictions, listPredictions } from "./prediction-tracker.js";
+export { evaluateStockPredictions } from "./stock-analysis.js";
