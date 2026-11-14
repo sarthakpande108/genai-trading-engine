@@ -59,3 +59,41 @@ test("execution refuses an order that breaches configured notional limit", async
   assert.equal(result.accepted, false);
   assert.equal(result.reason, "RISK_CHECK_FAILED");
 });
+
+
+import { randomUUID } from "node:crypto";
+
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+test("Neon persists paper orders and updates positions atomically", { skip: !testDatabaseUrl }, async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = testDatabaseUrl;
+  const { query, closeDatabase } = await import("../db.js");
+  const symbol = "TEST_PAPER_" + randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase();
+  try {
+    const adapter = createExecutionAdapter({
+      maxOrderNotional: 10_000,
+      availableCapital: 10_000,
+      persistPaperOrders: true,
+    });
+    const buy = await adapter.placeOrder({ symbol, side: "BUY", quantity: 4, price: 100 });
+    assert.equal(buy.accepted, true);
+    assert.equal(buy.persisted, true);
+    const sell = await adapter.placeOrder({ symbol, side: "SELL", quantity: 1, price: 110 });
+    assert.equal(sell.accepted, true);
+    const orders = await adapter.listPaperOrders({ limit: 10 });
+    assert.equal(orders.filter((order) => order.symbol === symbol).length, 2);
+    const { rows } = await query("SELECT quantity, average_price FROM paper_positions WHERE symbol = $1", [symbol]);
+    assert.equal(Number(rows[0].quantity), 3);
+    assert.equal(Number(rows[0].average_price), 100);
+    await assert.rejects(
+      adapter.placeOrder({ symbol, side: "SELL", quantity: 4, price: 110 }),
+      /exceeds the persisted position/
+    );
+  } finally {
+    await query("DELETE FROM paper_orders WHERE symbol = $1", [symbol]);
+    await query("DELETE FROM paper_positions WHERE symbol = $1", [symbol]);
+    await closeDatabase();
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+  }
+});
