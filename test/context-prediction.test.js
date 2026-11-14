@@ -16,7 +16,7 @@ function candles(count = 8) {
 
 test("market context summarizes benchmark and sector relative moves", () => {
   const context = buildMarketContext({
-    benchmarkCandles: candles(5), sectorCandles: candles(5).map((r) => [r[0], r[1], r[2], r[3], r[4] * 1.02, r[5]]),
+    benchmarkCandles: candles(5), sectorCandles: candles(5).map((r) => [r[0], r[1] * 1.02, r[2] * 1.02, r[3] * 1.02, r[4] * 1.02, r[5]]),
     benchmarkName: "NIFTY 50", sectorName: "NIFTY IT",
   });
   assert.equal(context.benchmark.name, "NIFTY 50");
