@@ -21,7 +21,7 @@ test("market context summarizes benchmark and sector relative moves", () => {
   });
   assert.equal(context.benchmark.name, "NIFTY 50");
   assert.ok(context.benchmark.changeWindowPct > 0);
-  assert.ok(context.sector.changeWindowPct > context.benchmark.changePct);
+  assert.ok(context.sector.changeWindowPct > context.benchmark.changeWindowPct);
 });
 
 test("news normalizer keeps source, title, URL and valid publication time", () => {
