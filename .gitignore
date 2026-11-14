@@ -44,3 +44,6 @@ __pycache__/
 
 # Misc
 *.bak
+
+# Broker instrument master is downloaded and cached locally; do not version it
+scripMaster.json
