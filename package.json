@@ -1,24 +1,22 @@
 {
-  "name": "ai_bot",
-  "version": "1.0.0",
-  "description": "Broker-connected market data, technical analysis, risk, and backtesting toolkit",
+  "name": "genai-trading-engine",
+  "version": "1.1.0",
+  "description": "AI-assisted market research, backtesting and paper trading toolkit",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "db:migrate": "node scripts/migrate.js"
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "dependencies": {
     "breezeconnect": "^1.0.29",
     "express": "^5.1.0",
     "kiteconnect": "^5.1.0",
+    "pg": "^8.16.3",
     "smartapi-javascript": "^1.0.27",
     "speakeasy": "^2.0.0",
     "technicalindicators": "^3.1.0"
   },
-  "devDependencies": {
-    "mocha": "^10.8.2"
-  }
+  "devDependencies": { "mocha": "^10.8.2" }
 }
