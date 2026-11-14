@@ -14,24 +14,10 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange) {
     // get token
     const master = await downloadScripMaster();
     const token = master ? findSymbolToken(master, exchange, tradingsymbol) : null;
-    const symboltoken = token || "2885"; // fallback RELIANCE token
+    if (!token) throw new Error(`No instrument token found for ${exchange}:${tradingsymbol}`);
+    const symboltoken = token;
 
-    const offsetMs = 330 * 60 * 1000; // IST offset
-    const nowUtcMs = Date.now();
-    const nowIstMs = nowUtcMs + offsetMs;
-    const now = new Date(nowIstMs);
-
-    // Helper to get date string in IST format for SmartAPI
-    const formatToIST = (date) => {
-      const istMs = date.getTime() + 330 * 60000;
-      const d = new Date(istMs);
-      const YYYY = d.getUTCFullYear();
-      const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const DD = String(d.getUTCDate()).padStart(2, "0");
-      const hh = String(d.getUTCHours()).padStart(2, "0");
-      const mm = String(d.getUTCMinutes()).padStart(2, "0");
-      return `${YYYY}-${MM}-${DD} ${hh}:${mm}`;
-    };
+    const now = new Date();
 
     // Helper to find previous trading day (skip weekends)
     function getPreviousTradingDay(date) {
@@ -108,7 +94,8 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange) {
       // get token
       const master = await downloadScripMaster();
       const token = master ? findSymbolToken(master, exchange, tradingsymbol) : null;
-      const symboltoken = token || "2885"; // fallback RELIANCE
+      if (!token) throw new Error(`No instrument token found for ${exchange}:${tradingsymbol}`);
+      const symboltoken = token;
   
       const offsetMs = 330 * 60 * 1000; // IST offset
       const nowUtcMs = Date.now();
