@@ -58,8 +58,7 @@ export function runBacktest({
       entryIndex = barIndex;
     } else {
       const pnl = (executionPrice - entryPrice) * quantity -
-        (entryPrice * quantity + executionPrice * quantity) * feeBps / 10_000 -
-        (entryPrice + executionPrice) * quantity * slippageBps / 10_000;
+        (entryPrice * quantity + executionPrice * quantity) * feeBps / 10_000;
       trades.push({ entryIndex, exitIndex: barIndex, entryPrice, exitPrice: executionPrice, pnl });
       entryPrice = null;
       entryIndex = null;
@@ -81,8 +80,7 @@ export function runBacktest({
     const fee = quantity * exitPrice * feeBps / 10_000;
     cash += quantity * exitPrice - fee;
     const pnl = (exitPrice - entryPrice) * quantity -
-      (entryPrice * quantity + exitPrice * quantity) * feeBps / 10_000 -
-      (entryPrice + exitPrice) * quantity * slippageBps / 10_000;
+      (entryPrice * quantity + exitPrice * quantity) * feeBps / 10_000;
     trades.push({ entryIndex, exitIndex: bars.length - 1, entryPrice, exitPrice, pnl });
     position = 0;
     equityCurve[equityCurve.length - 1].equity = cash;
