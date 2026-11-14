@@ -6,9 +6,12 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "db:migrate": "node scripts/migrate.js"
+    "db:migrate": "node scripts/migrate.js",
+    "db:smoke": "node scripts/db-smoke-test.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "breezeconnect": "^1.0.29",
     "express": "^5.1.0",
@@ -18,5 +21,7 @@
     "speakeasy": "^2.0.0",
     "technicalindicators": "^3.1.0"
   },
-  "devDependencies": { "mocha": "^10.8.2" }
+  "devDependencies": {
+    "mocha": "^10.8.2"
+  }
 }
