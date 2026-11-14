@@ -1,10 +1,8 @@
 // fetchData.js
 import { smartConnect } from "./main.js";
-import fs from "fs/promises";
-import https from "https";
 import { downloadScripMaster, findSymbolToken, formatToIST } from "./utlis.js";
 
-export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange) {
+export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp = false } = {}) {
   try {
     const sessionData = await smartConnect();
     if (!sessionData) throw new Error("Login failed");
@@ -71,9 +69,8 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange) {
       console.log(`✅ Fetched ${collected.length} valid daily candles.`);
     }
 
-    // Remove timestamp → return [open, high, low, close, volume]
-    const dataOnly = collected.map((row) => row.slice(1));
-    return dataOnly;
+    // Preserve broker timestamps when explicitly requested.
+    return includeTimestamp ? collected : collected.map((row) => row.slice(1));
   } catch (err) {
     console.error("Error in fetchLast20DaysDailyCandles:", err);
     return [];
@@ -84,7 +81,7 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange) {
 /**
  * 🕐 Fetch last 20 candles of 5-minute interval (handles market hours)
  */
-export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange) {
+export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { includeTimestamp = false } = {}) {
     try {
       const sessionData = await smartConnect();
       if (!sessionData) throw new Error("Login failed");
@@ -241,11 +238,20 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange) {
         console.warn(`Only ${collected.length} candles found (expected 20).`);
       }
   
-      // remove timestamp and return array of [open, high, low, close, volume]
-      const dataOnly = collected.map(row => row.slice(1));
-      return dataOnly;
+      // Preserve broker timestamps when explicitly requested.
+      return includeTimestamp ? collected : collected.map(row => row.slice(1));
     } catch (err) {
       console.error("Error in fetchLast20FiveMinCandlesRobust:", err);
       return [];
     }
   }
+
+/** Timestamp-preserving daily candle API. Each row is [timestamp, open, high, low, close, volume]. */
+export function fetchDailyCandlesWithTimestamps(tradingsymbol, exchange) {
+  return fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp: true });
+}
+
+/** Timestamp-preserving five-minute candle API. Each row is [timestamp, open, high, low, close, volume]. */
+export function fetchFiveMinuteCandlesWithTimestamps(tradingsymbol, exchange) {
+  return fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { includeTimestamp: true });
+}
