@@ -1,176 +1,90 @@
 # GenAI Trading Engine
 
-**A dual-workflow trading research platform combining Gemini-powered market intelligence with deterministic strategy backtesting and risk-controlled paper execution.**
+A dual-workflow market research and paper-trading project for Indian equities, built with **Node.js, Google Gemini, and Angel One SmartAPI**.
 
-The engine brings two complementary workflows into one Python-free, Node.js platform for Indian equities:
+It combines:
+- **GenAI market analysis:** Gemini interprets technical indicators, benchmark/sector context and recent news to produce a structured market outlook.
+- **Quantitative trading:** deterministic strategies, backtesting, portfolio simulation, risk checks and paper-order simulation.
 
-1. **GenAI research workflow** — collects market, technical, benchmark/sector and news evidence, then uses Google Gemini to produce a structured, explainable market outlook and tracks the forecast against subsequent prices.
-2. **Quantitative trading workflow** — generates deterministic strategy signals, simulates portfolio performance with transaction costs, applies position/order risk checks, and supports paper execution by default.
-
-> **Important distinction:** Gemini currently provides market research and directional forecasts. The deterministic strategy/backtesting and paper-execution modules are separate; Gemini forecasts are not automatically converted into trading orders. The execution adapter defaults to simulation and does not place broker orders. This is experimental research software, not investment advice.
+> **Important:** Gemini currently provides research and forecasts. It does not automatically generate or execute trading orders. The strategy and paper-execution workflow is separate. Paper mode is the default; the current project does not connect the execution adapter to Angel One order placement. This is an experimental project, not investment advice.
 
 ---
 
-## Product overview
+## How it works
 
-| Workflow | Purpose | Core components | Output |
-|---|---|---|---|
-| **GenAI market intelligence** | Interpret market evidence and form a short-horizon outlook | Angel One SmartAPI, technical indicators, benchmark/sector context, NewsAPI, Gemini | Structured bullish/bearish/neutral analysis and forecast record |
-| **Quantitative strategy & paper trading** | Test deterministic rules and simulate risk-controlled orders | SMA crossover, backtesting, portfolio simulation, risk checks, execution adapter | Trades, equity curve, performance metrics and simulated orders |
-
-## System architecture
-
-### 1. GenAI market intelligence pipeline
-
-This workflow uses Gemini as the reasoning and synthesis layer. The application—not the LLM—retrieves and validates the underlying market data and calculates the technical indicators.
+### 1. GenAI market analysis
 
 ```mermaid
 flowchart TD
-    A[Stock selection: symbol and exchange] --> B[Angel One SmartAPI]
-    B --> C[Daily OHLCV candles]
-    B --> D[5-minute OHLCV candles]
-    B --> E[Benchmark / optional sector candles]
-    F[NewsAPI] --> G[Normalize and retain source metadata]
-    C --> H[Deterministic feature engineering]
-    D --> H
-    E --> I[Market context calculation]
-    G --> J[News evidence package]
-    H --> K[Unified evidence payload]
-    I --> K
-    J --> K
-    K --> L[Google Gemini generateContent]
-    L --> M[Schema-validated structured analysis]
-    M --> N[Forecast persistence]
-    N --> O[1 / 3 / 5-session evaluation]
-    B --> P[Subsequent actual daily candles]
-    P --> O
-    O --> Q[Directional hit / miss and realized return]
+    A[Select stock] --> B[Angel One SmartAPI]
+    B --> C[Daily + 5-minute candles]
+    B --> D[Benchmark / sector data]
+    E[NewsAPI] --> F[Recent news articles]
+    C --> G[Calculate SMA, EMA, RSI, ATR and volume features]
+    D --> H[Market context]
+    F --> I[News context]
+    G --> J[Combine evidence]
+    H --> J
+    I --> J
+    J --> K[Google Gemini]
+    K --> L[Structured market outlook]
+    L --> M[Save forecast]
+    M --> N[Evaluate after 1, 3 and 5 sessions]
 ```
 
-**What the AI does**
-- Synthesizes daily and five-minute price/volume context with calculated technical indicators.
-- Interprets benchmark and optional sector performance alongside the stock.
-- Reviews recent news articles with publisher, title, URL and publication time.
-- Produces structured outlook, horizon, subjective directional probability estimate, confidence label, evidence, risks, approximate support/resistance and invalidation conditions.
-- Explicitly reports missing evidence and data limitations.
+The application retrieves and validates the data and calculates indicators. **Gemini is the AI reasoning layer**: it combines the supplied evidence and returns a bullish, bearish or neutral outlook, a 1–5 session horizon, a subjective directional probability estimate, confidence, supporting factors, risks and invalidation conditions.
 
-**What remains deterministic**
-- Candle validation and feature engineering.
-- SMA, EMA, RSI, ATR, volume and price-change calculations.
-- Benchmark/sector return and range calculations.
-- JSON/schema validation of the Gemini response.
-- Forecast storage and comparison with future observed closes.
+Forecasts can be stored and later compared with actual prices. The probability is a model estimate, not a statistically calibrated probability.
 
-Gemini's probability is a subjective model estimate, not a statistically calibrated probability. The model is instructed to use only the supplied evidence and not invent prices, news or indicators.
-
-### 2. Quantitative strategy, backtesting and paper-execution pipeline
-
-This workflow is deliberately separate from the Gemini analysis pipeline. Signals are generated by deterministic strategy logic and tested without look-ahead by executing a close-derived signal at the next bar's open.
+### 2. Quantitative strategy and paper trading
 
 ```mermaid
 flowchart TD
     A[Historical OHLCV data] --> B[Deterministic strategy]
-    B --> C[Target position signals: long / flat]
-    C --> D[Single-instrument backtest]
-    C --> E[Multi-instrument portfolio backtest]
-    D --> F[Performance and drawdown metrics]
+    B --> C[Long / flat signals]
+    C --> D[Backtesting]
+    C --> E[Portfolio simulation]
+    D --> F[Returns, trades and drawdown]
     E --> F
-    G[Proposed paper order] --> H[Order validation]
+    G[Proposed order] --> H[Risk validation]
     H --> I{Risk checks pass?}
-    I -- No --> J[Reject with violations]
-    I -- Yes --> K{Execution mode}
-    K -- Paper default --> L[Record simulated order]
-    K -- Live with explicit opt-in --> M[Injected broker submit function]
+    I -- No --> J[Reject order]
+    I -- Yes --> K[Paper execution]
+    K --> L[Simulated order record]
 ```
 
-**Trading and risk capabilities**
-- SMA-crossover target-position signals (long/flat).
-- Single-instrument backtesting with next-bar-open execution.
-- Multi-instrument, shared-cash portfolio simulation.
-- Configurable fees and slippage assumptions.
-- Equity curve, total return, drawdown and trade-level results.
-- Position sizing based on risk budget, stop distance, notional cap and lot size.
-- Order checks for maximum notional and available capital.
-- Paper execution by default; simulated orders are recorded in memory by the execution adapter.
-
-**Live execution safety:** live mode requires an explicit `allowLiveOrders: true` opt-in and an injected `submitOrder` function. The repository does not currently wire this adapter to Angel One order placement. Do not treat the live-mode interface as a broker-integrated live trading feature.
+This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated in memory; no real broker order is placed.
 
 ---
 
-## End-to-end workflows
-
-### GenAI analysis
-
-1. Select an NSE/BSE symbol and provide its company name where useful for news relevance.
-2. Retrieve daily and five-minute OHLCV candles from Angel One SmartAPI.
-3. Calculate indicators and recent price/volume features locally.
-4. Optionally retrieve NIFTY 50 and a caller-specified sector index.
-5. Optionally retrieve and normalize recent NewsAPI articles.
-6. Build a single evidence payload and submit it to Gemini.
-7. Validate the structured response and optionally persist the forecast.
-8. Run the evaluator after subsequent sessions to compare the forecast with actual closes at +1, +3 and +5 sessions.
-
-### Strategy research and simulation
-
-1. Supply historical bars and deterministic strategy signals.
-2. Run a single-symbol or shared-cash portfolio backtest.
-3. Model fees and slippage; signals from a completed close execute at the next bar open.
-4. Review equity curve, returns, drawdown, trades and skipped orders.
-5. For an individual proposed order, apply position/order risk checks before paper simulation.
-
----
-
-## Technology stack
+## Tech stack
 
 - **Runtime:** Node.js (ES modules)
-- **GenAI:** Google Gemini API (`generateContent`, structured JSON response schema)
+- **GenAI:** Google Gemini API with structured JSON output
 - **Market data:** Angel One SmartAPI
-- **News enrichment:** NewsAPI (optional)
-- **Quantitative analysis:** custom SMA, EMA, RSI, true range and ATR utilities
-- **Research persistence:** local JSON forecast store
-- **Testing:** Node.js built-in test runner
-- **CI:** GitHub Actions
-
-## Repository map
-
-| Module | Responsibility |
-|---|---|
-| `stock-analysis.js` | Orchestrates market data, context, news, Gemini analysis and forecast persistence |
-| `gemini-analysis.js` | Feature payload construction, Gemini API request and response validation |
-| `market-context.js` | Benchmark and sector candle validation and relative-return summaries |
-| `news.js` | NewsAPI retrieval and article normalization |
-| `prediction-tracker.js` | Forecast persistence and 1/3/5-session outcome evaluation |
-| `historicaldata.js` | Timestamped daily and five-minute candle retrieval |
-| `indicator.js` | SMA, EMA, RSI, true range and ATR |
-| `strategy.js` | Deterministic SMA-crossover target-position signals |
-| `backtest.js` | Single-instrument next-bar-open backtesting |
-| `portfolio-backtest.js` | Multi-instrument shared-cash portfolio simulation |
-| `risk.js` | Position sizing and order-risk validation |
-| `execution.js` | Paper-first execution adapter and explicit live-mode guard |
-| `performance.js` | Return, drawdown and trade-performance metrics |
-| `main.js`, `utlis.js` | SmartAPI session, scrip master, token resolution and IST utilities |
-| `test/` | Unit and integration tests with injected/mocked external dependencies |
-
----
+- **News:** NewsAPI (optional)
+- **Indicators:** SMA, EMA, RSI, ATR and volume features
+- **Trading research:** strategy signals, backtesting and portfolio simulation
+- **Risk:** position sizing and order validation
+- **Testing / CI:** Node.js test runner and GitHub Actions
 
 ## Quick start
 
 ### Requirements
 
 - Node.js 20+
-- npm
-- Angel One SmartAPI credentials for broker-connected market data
+- Angel One SmartAPI credentials
 - Gemini API key
-- NewsAPI key for news enrichment (optional)
+- NewsAPI key (optional)
 
-Install dependencies and run tests:
+Install and run tests:
 
 ```bash
 npm ci
 npm test
 ```
 
-Configure credentials in your shell or deployment environment:
+Configure these environment variables in your runtime:
 
 ```bash
 ANGEL_API_KEY=your_angel_api_key
@@ -185,9 +99,9 @@ NEWSAPI_KEY=your_newsapi_key
 PREDICTION_STORE_PATH=./data/predictions.json
 ```
 
-`NEWSAPI_KEY` is optional. Without it, the AI workflow runs with news marked unavailable. The prediction store defaults to `./data/predictions.json`; the `data/` directory is git-ignored. This project does not load `.env` automatically. Never commit API keys, MPINs, TOTP secrets, access tokens or feed tokens.
+The project does not load `.env` automatically. Keep credentials out of source control. NewsAPI is optional; without it, analysis continues with news marked unavailable.
 
-### Run Gemini-powered stock analysis
+### Run AI market analysis
 
 ```js
 import { analyzeStock } from "./index.js";
@@ -202,7 +116,7 @@ console.dir(result.analysis, { depth: null });
 console.log("Saved forecast:", result.prediction);
 ```
 
-To include an explicit sector index:
+To include a sector index, pass it explicitly:
 
 ```js
 const result = await analyzeStock({
@@ -216,21 +130,18 @@ const result = await analyzeStock({
 });
 ```
 
-### Evaluate saved AI forecasts
+### Evaluate saved forecasts
 
 ```js
 import { evaluateStockPredictions, listPredictions } from "./index.js";
 
-const evaluation = await evaluateStockPredictions();
-console.log(evaluation);
-
-const forecasts = await listPredictions();
-console.dir(forecasts, { depth: null });
+console.log(await evaluateStockPredictions());
+console.dir(await listPredictions(), { depth: null });
 ```
 
-Evaluation is an explicit function call. Schedule it after market close using your own job runner if recurring evaluation is required.
+Evaluation is an explicit function call; schedule it after market close if recurring evaluation is needed.
 
-### Run deterministic strategy backtesting
+### Run a strategy backtest
 
 ```js
 import {
@@ -264,79 +175,31 @@ const result = runBacktest({
 console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 ```
 
-### Simulate a paper order
+## Main modules
 
-```js
-import { createExecutionAdapter } from "./index.js";
+| File | Purpose |
+|---|---|
+| `stock-analysis.js` | Coordinates market data, news, Gemini and forecast tracking |
+| `gemini-analysis.js` | Builds the analysis payload and calls Gemini |
+| `market-context.js` | Calculates benchmark and sector context |
+| `news.js` | Retrieves and normalizes news |
+| `prediction-tracker.js` | Stores and evaluates forecasts |
+| `historicaldata.js` | Retrieves daily and five-minute candles |
+| `indicator.js` | Technical indicator calculations |
+| `strategy.js` | Deterministic SMA-crossover signals |
+| `backtest.js`, `portfolio-backtest.js` | Single-stock and portfolio backtesting |
+| `risk.js`, `execution.js` | Risk checks and paper execution |
+| `performance.js` | Backtest performance metrics |
 
-const execution = createExecutionAdapter({
-  mode: "paper",
-  maxOrderNotional: 25_000,
-  availableCapital: 100_000,
-});
+## Important limitations
 
-const result = await execution.placeOrder({
-  symbol: "RELIANCE",
-  side: "BUY",
-  quantity: 1,
-  price: 1_250,
-});
-
-console.log(result);
-console.log(execution.getPaperOrders());
-```
-
-The paper adapter validates risk limits and records a simulated order. It does not contact a broker or model actual fills.
-
----
-
-## Public API
-
-- `analyzeStock(options)` — retrieve evidence, call Gemini and optionally save a forecast.
-- `evaluateStockPredictions(options?)` — evaluate saved forecasts using fresh daily candles.
-- `buildStockAnalysisPayload(options)` / `analyzeStockDataWithGemini(payload, options?)` — lower-level AI analysis functions.
-- `buildMarketContext(options)` — summarize benchmark and sector candles.
-- `fetchStockNews(options)` / `normalizeNewsArticles(articles)` — news retrieval and normalization.
-- `recordPrediction(options)`, `evaluatePendingPredictions(options)`, `listPredictions(options?)` — forecast persistence/evaluation.
-- `smaCrossoverSignals(closes, options?)` — deterministic strategy signals.
-- `runBacktest(options)`, `runPortfolioBacktest(options)` — strategy and portfolio simulations.
-- `calculatePositionSize(options)`, `validateOrderRisk(options)` — risk utilities.
-- `createExecutionAdapter(options)` — paper-first order simulation adapter.
-- `sma(values, period)`, `ema(values, period)`, `rsi(values, period)`, `trueRange(highs, lows, closes)`, `atr(highs, lows, closes, period)` — indicators.
-- `summarizeBacktest(result, options?)` — performance metrics.
-- `smartConnect(options?)`, `clearSmartSession()`, `downloadScripMaster(...)`, `findSymbolToken(...)`, `formatToIST(date)` — broker/session utilities.
-
----
-
-## Engineering boundaries and limitations
-
-- **AI is advisory:** Gemini produces research analysis; it does not currently generate or submit strategy orders.
-- **No calibrated prediction claim:** directional probability is a subjective model estimate. Forecast tracking currently records simple direction hit/miss and realized return, not full statistical calibration.
-- **Data scope:** the workflow does not currently include full fundamentals, corporate filings, market breadth, institutional flows, options positioning or full order-book depth.
-- **Market context:** benchmark defaults to NIFTY 50 in the broker-connected workflow; sector context must be supplied explicitly and resolved through the scrip master.
-- **News quality:** articles are external source material, not verified disclosures. Relevance and coverage depend on the NewsAPI query and plan.
-- **Forecast timing:** run after market close for consistent session definitions. An in-progress daily candle can affect the reference close.
-- **Backtest assumptions:** long/flat, fixed quantity, next-bar-open execution, modeled fees/slippage. No margin, shorts, partial fills, taxes, financing, dividends, corporate actions or market impact.
-- **Portfolio simulation:** long-only shared-cash model; no leverage, shorts, rebalancing or asynchronous fills.
-- **Execution:** paper mode is in-memory simulation. Live mode requires explicit opt-in and an injected submit function; no broker order route is wired in this repository.
-- **External dependencies:** broker, news and Gemini services can be delayed, rate-limited, unavailable or return incomplete data.
-
-## Roadmap
-
-- [x] Gemini structured analysis over daily/intraday candles and indicators.
-- [x] Benchmark and optional sector context.
-- [x] News enrichment with source metadata.
-- [x] Forecast persistence and 1/3/5-session outcome tracking.
-- [x] Deterministic strategy signals and backtesting.
-- [x] Multi-instrument shared-cash portfolio simulation.
-- [x] Risk validation and paper-first execution adapter.
-- [x] Automated test suite and GitHub Actions CI.
-- [ ] Connect AI forecasts to a separately defined, deterministic signal policy with explicit validation (not direct free-form LLM order execution).
-- [ ] Add exchange-calendar-aware evaluation and robust historical windows.
-- [ ] Add Brier score, calibration curves and benchmark-relative forecast reporting.
-- [ ] Add persistent paper-order ledger, fill/slippage simulation and portfolio-level risk controls.
-- [ ] Add observability, retry/backoff policies and provider health metrics.
+- Gemini analysis is advisory; forecasts are not automatically turned into trades.
+- Directional probabilities are subjective model estimates, not calibrated predictions.
+- Sector context is optional and must be supplied explicitly.
+- News coverage depends on the NewsAPI query and plan; verify original sources.
+- Backtests use simplified assumptions and do not model all real-world trading costs, fills, taxes or market impact.
+- Paper execution is simulation only. The live adapter requires explicit opt-in and an injected submit function; it is not wired to broker order placement.
 
 ## Disclaimer
 
-For educational and engineering experimentation only. Nothing in this repository is investment advice or a recommendation to buy, sell or hold a security. Historical backtests and model-generated forecasts do not guarantee future results. Independently validate data quality, news sources, broker terms, exchange rules and model behavior before making financial decisions.
+For educational and engineering experimentation only. Nothing in this repository is investment advice or a recommendation to buy, sell or hold a security. Historical backtests and AI-generated forecasts do not guarantee future results.
