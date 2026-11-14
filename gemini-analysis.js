@@ -31,21 +31,24 @@ const ANALYSIS_SCHEMA = {
 };
 
 function normalizeCandles(rows, label) {
-  if (!Array.isArray(rows) || rows.length < 15) {
-    throw new RangeError(label + " needs at least 15 timestamped candles");
+  if (!Array.isArray(rows) || rows.length < 20) {
+    throw new RangeError(label + " needs at least 20 timestamped candles for the SMA20 feature");
   }
+  let previousTimestamp = -Infinity;
   return rows.map((row, index) => {
     if (!Array.isArray(row) || row.length < 6) {
       throw new TypeError(label + " candle " + index + " must be [timestamp, open, high, low, close, volume]");
     }
     const [timestamp, open, high, low, close, volume] = row;
+    const timestampMs = Date.parse(timestamp);
     const values = [open, high, low, close, volume].map(Number);
-    if (!Number.isFinite(Date.parse(timestamp)) ||
+    if (!Number.isFinite(timestampMs) || timestampMs <= previousTimestamp ||
         values.some((value) => !Number.isFinite(value)) ||
         values.slice(0, 4).some((value) => value <= 0) || values[4] < 0 ||
         values[1] < values[2] || values[0] < values[2] || values[0] > values[1] || values[3] < values[2] || values[3] > values[1]) {
       throw new TypeError(label + " contains invalid candle data at index " + index);
     }
+    previousTimestamp = timestampMs;
     return { timestamp, open: values[0], high: values[1], low: values[2], close: values[3], volume: values[4] };
   });
 }
@@ -166,9 +169,16 @@ export async function analyzeStockDataWithGemini(payload, {
     let analysis;
     try { analysis = JSON.parse(text); }
     catch { throw new Error("Gemini returned invalid JSON analysis"); }
+    const requiredStrings = ["symbol", "horizon", "executiveSummary", "trendAnalysis", "invalidationCondition", "scenario", "marketContextAnalysis", "newsAnalysis"];
+    const requiredArrays = ["indicatorAnalysis", "bullishFactors", "bearishFactors", "supportLevels", "resistanceLevels", "risks", "dataLimitations"];
+    const complete = requiredStrings.every((key) => typeof analysis[key] === "string") &&
+      requiredArrays.every((key) => Array.isArray(analysis[key]));
+    const probabilityValid = Number.isFinite(analysis.directionalProbabilityPct) &&
+      analysis.directionalProbabilityPct >= 50 && analysis.directionalProbabilityPct <= 90 &&
+      (analysis.outlook !== "NEUTRAL" || analysis.directionalProbabilityPct === 50);
     if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(analysis.outlook) ||
-        !Number.isFinite(analysis.directionalProbabilityPct) ||
-        analysis.directionalProbabilityPct < 0 || analysis.directionalProbabilityPct > 100) {
+        !["LOW", "MEDIUM", "HIGH"].includes(analysis.confidenceLabel) ||
+        !probabilityValid || !complete || analysis.symbol !== payload.symbol) {
       throw new Error("Gemini response failed analysis validation");
     }
     return {
