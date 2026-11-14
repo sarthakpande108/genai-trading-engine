@@ -53,7 +53,7 @@ flowchart TD
     K --> L[Simulated order record]
 ```
 
-This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated in memory; no real broker order is placed.
+This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated; forecast history is persisted in PostgreSQL. The paper-order adapter remains in-memory unless a persistent order repository is explicitly used.
 
 ---
 
@@ -66,6 +66,7 @@ This workflow does not depend on Gemini. It uses deterministic SMA-crossover sig
 - **Indicators:** SMA, EMA, RSI, ATR and volume features
 - **Trading research:** strategy signals, backtesting and portfolio simulation
 - **Risk:** position sizing and order validation
+- **Persistence:** Neon PostgreSQL via `pg`, SQL migrations and transactional writes
 - **Testing / CI:** Node.js test runner and GitHub Actions
 
 ## Quick start
@@ -96,10 +97,22 @@ GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-3.8-flash
 
 NEWSAPI_KEY=your_newsapi_key
-PREDICTION_STORE_PATH=./data/predictions.json
+
+# Neon PostgreSQL (use Neon pooled connection string)
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+PG_POOL_MAX=5
 ```
 
-The project does not load `.env` automatically. Keep credentials out of source control. NewsAPI is optional; without it, analysis continues with news marked unavailable.
+The project does not load `.env` automatically. Copy `.env.example` to your local environment and keep credentials out of source control. NewsAPI is optional; without it, analysis continues with news marked unavailable. Neon PostgreSQL is required when forecast tracking is enabled.
+
+### Set up Neon PostgreSQL
+
+1. Create a Neon project and copy its pooled connection string.
+2. Set `DATABASE_URL` in your local environment and deployment environment variables.
+3. Run the schema migration once: `npm run db:migrate`.
+4. Run `npm test`. Set `TEST_DATABASE_URL` to a disposable migrated database to enable the PostgreSQL integration test.
+
+Forecast history is stored in `predictions`; evaluated 1-, 3- and 5-session outcomes are stored in `prediction_outcomes`. The migration is in `migrations/001_initial.sql`. Never commit the Neon connection string.
 
 ### Run AI market analysis
 
@@ -183,7 +196,8 @@ console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 | `gemini-analysis.js` | Builds the analysis payload and calls Gemini |
 | `market-context.js` | Calculates benchmark and sector context |
 | `news.js` | Retrieves and normalizes news |
-| `prediction-tracker.js` | Stores and evaluates forecasts |
+| `prediction-tracker.js` | Persists and evaluates forecasts in PostgreSQL |
+| `db.js`, `migrations/` | PostgreSQL pool, transactions and schema |
 | `historicaldata.js` | Retrieves daily and five-minute candles |
 | `indicator.js` | Technical indicator calculations |
 | `strategy.js` | Deterministic SMA-crossover signals |
@@ -198,7 +212,7 @@ console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 - Sector context is optional and must be supplied explicitly.
 - News coverage depends on the NewsAPI query and plan; verify original sources.
 - Backtests use simplified assumptions and do not model all real-world trading costs, fills, taxes or market impact.
-- Paper execution is simulation only. The live adapter requires explicit opt-in and an injected submit function; it is not wired to broker order placement.
+- Paper execution is simulation only. Its in-memory order list is not durable across restarts. The live adapter requires explicit opt-in and an injected submit function; it is not wired to broker order placement.
 
 ## Disclaimer
 
