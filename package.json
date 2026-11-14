@@ -1,6 +1,6 @@
 {
-  "name": "genai-trading-engine",
-  "version": "1.1.0",
+  "name": "ai_bot",
+  "version": "1.0.0",
   "description": "Broker-connected market data and technical analysis utilities for experimental GenAI trading workflows",
   "type": "module",
   "main": "main.js",
@@ -19,5 +19,7 @@
     "speakeasy": "^2.0.0",
     "technicalindicators": "^3.1.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "mocha": "^10.8.2"
+  }
 }
