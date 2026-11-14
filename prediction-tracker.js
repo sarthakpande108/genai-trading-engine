@@ -27,7 +27,8 @@ export async function recordPrediction({ analysis, input } = {}) {
   }
   if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(analysis.outlook) ||
       !Number.isFinite(analysis.directionalProbabilityPct) ||
-      analysis.directionalProbabilityPct < 50 || analysis.directionalProbabilityPct > 90) {
+      analysis.directionalProbabilityPct < 50 || analysis.directionalProbabilityPct > 90 ||
+      (analysis.outlook === "NEUTRAL" && analysis.directionalProbabilityPct !== 50)) {
     throw new TypeError("analysis contains invalid forecast direction or probability");
   }
   const record = {
@@ -80,7 +81,8 @@ export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
     const missing = [1, 3, 5].filter((h) => !outcomes[String(h)]);
     if (!missing.length) continue;
     const rows = await fetchDailyCandles(prediction.symbol, prediction.exchange, {
-      from: new Date(prediction.base_candle_timestamp),
+      // Include the base session even when the broker API treats fromdate as exclusive.
+      from: new Date(new Date(prediction.base_candle_timestamp).getTime() - 24 * 60 * 60 * 1000),
     });
     if (!Array.isArray(rows)) continue;
     const baseTime = new Date(prediction.base_candle_timestamp).getTime();
