@@ -103,7 +103,7 @@ test("end-to-end analyzeStock can use injected candles without broker credential
   });
   const result = await analyzeStock({
     symbol: "RELIANCE", exchange: "NSE", apiKey: "test-key", fetchImpl,
-    dailyCandles: makeCandles(), intradayCandles: makeCandles(20, 5),
+    dailyCandles: makeCandles(), intradayCandles: makeCandles(20, 5), trackPrediction: false,
   });
   assert.equal(result.analysis.symbol, "RELIANCE");
   assert.equal(result.input.daily.candleCount, 20);
