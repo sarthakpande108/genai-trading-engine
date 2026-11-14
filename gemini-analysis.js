@@ -41,7 +41,7 @@ function normalizeCandles(rows, label) {
     if (!Number.isFinite(Date.parse(timestamp)) ||
         values.some((value) => !Number.isFinite(value)) ||
         values.slice(0, 4).some((value) => value <= 0) || values[4] < 0 ||
-        values[1] < values[2] || values[2] < values[3] || values[3] < 0) {
+        values[1] < values[2] || values[0] < values[2] || values[0] > values[1] || values[3] < values[2] || values[3] > values[1]) {
       throw new TypeError(label + " contains invalid candle data at index " + index);
     }
     return { timestamp, open: values[0], high: values[1], low: values[2], close: values[3], volume: values[4] };
