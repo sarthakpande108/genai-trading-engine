@@ -8,13 +8,15 @@ A modular Node.js toolkit for broker-connected market data, technical indicators
 
 - Angel One SmartAPI session creation using TOTP and environment-based credentials.
 - Scrip-master download, local caching, and exact exchange/symbol token resolution.
-- Historical daily and five-minute candle retrieval.
+- Historical daily and five-minute candle retrieval, with optional timestamp-preserving APIs.
 - Mid-price derivation from OHLC candle data.
 - SMA, EMA, RSI, true-range, and ATR calculations.
 - Deterministic SMA-crossover target-position signals.
 - Risk-based position sizing and pre-trade notional/capital checks.
 - Long/flat backtesting with next-bar-open execution, fees, slippage, and drawdown reporting.
 - Performance analytics: CAGR, annualized volatility, Sharpe ratio, maximum drawdown, win rate, and profit factor.
+- Multi-instrument, shared-cash portfolio backtesting with no-leverage purchase checks.
+- Paper execution adapter with order-risk checks; live execution remains disabled unless explicitly enabled and supplied with a broker adapter.
 - A single public entry point through `index.js`.
 
 ## Project structure
@@ -31,6 +33,8 @@ A modular Node.js toolkit for broker-connected market data, technical indicators
 | `risk.js` | Position sizing and order-risk validation |
 | `backtest.js` | Long/flat backtesting with next-bar execution |
 | `performance.js` | Backtest performance statistics |
+| `portfolio-backtest.js` | Multi-instrument shared-cash simulation |
+| `execution.js` | Guarded paper/live execution boundary |
 | `test/` | Unit tests |
 
 ## Requirements and setup
@@ -93,6 +97,9 @@ console.log({ result, metrics });
 - `findSymbolToken(master, exchange, symbol)`
 - `fetchLast20DaysDailyCandles(symbol, exchange)`
 - `fetchLast20FiveMinCandlesRobust(symbol, exchange)`
+- `fetchDailyCandlesWithTimestamps(symbol, exchange)` / `fetchFiveMinuteCandlesWithTimestamps(symbol, exchange)`
+- `runPortfolioBacktest(options)`
+- `createExecutionAdapter(options)`
 - `getStockMidPrices(symbol, exchange?)`
 - `sma(values, period)`, `ema(values, period)`, `rsi(values, period)`, `trueRange(highs, lows, closes)`, `atr(highs, lows, closes, period)`
 - `smaCrossoverSignals(closes, options?)`
@@ -102,14 +109,17 @@ console.log({ result, metrics });
 
 ## Research assumptions and limitations
 
-- Candle arrays returned by the current fetch helpers contain `[open, high, low, close, volume]`; timestamps are removed by those helpers.
+- The legacy candle helpers return `[open, high, low, close, volume]`; the timestamp-preserving helpers return `[timestamp, open, high, low, close, volume]`.
 - The mid-price is `(high + low) / 2`. It is not an executable quote or guaranteed fill price.
 - SMA crossover signals are long/flat only. A signal is calculated after a completed close and is eligible for execution at the next bar open.
 - The backtester models fixed quantity, fees, and slippage. It does not model margin, partial fills, taxes, financing, dividends, corporate actions, or market impact.
 - Performance annualization assumes equally spaced observations. Choose `periodsPerYear` to match the bar frequency (for example, 252 for daily observations); do not use daily annualization for intraday bars.
 - Exchange holidays are not fully modeled by weekend checks. Missing sessions should be treated as normal and validated against an exchange calendar.
 - Broker responses can be incomplete, delayed, throttled, or unavailable. Validate data quality and sample counts before using data in research.
-- This is not a live execution system. Broker order placement, portfolio reconciliation, production monitoring, and regulatory controls are intentionally outside the current scope.
+- The portfolio simulator is long-only, fixed-quantity and cash-constrained. It does not support shorts, margin, partial fills, portfolio rebalancing, or asynchronous fills.
+- The execution adapter defaults to paper mode. Live mode requires an explicit opt-in and an injected broker submit function; it is not pre-wired to Angel One order placement. Never enable live mode without independent review and broker-side safeguards.
+- Exchange holidays are not fully modeled by the historical retrieval helpers. A proper exchange-calendar integration remains outstanding.
+- This is not a production live-trading system. Broker order reconciliation, exchange-calendar integration, persistent portfolio state, operational monitoring, and regulatory controls remain outstanding.
 
 ## Engineering principles
 
@@ -127,11 +137,17 @@ console.log({ result, metrics });
 - [ ] Replace weekend-only date traversal with an exchange-calendar provider.
 - [ ] Preserve timestamps in a typed candle API.
 - [ ] Add bounded retries, rate limiting, and structured logging.
-- [ ] Add portfolio-level multi-instrument simulation and exposure constraints.
+- [ ] Add portfolio-level exposure constraints, rebalancing and sector limits.
+- [ ] Add a maintained exchange-calendar provider and holiday-aware historical date traversal.
+- [ ] Add bounded retries, request throttling and structured logs around broker calls.
+- [ ] Add broker-specific order adapter only after paper-trading and reconciliation tests.
 - [x] Add deterministic indicators and unit tests.
 - [x] Add risk sizing and pre-trade validation primitives.
 - [x] Add next-bar-open backtesting with transaction costs.
 - [x] Add a sample SMA-crossover strategy and performance analytics.
+- [x] Add timestamp-preserving candle retrieval functions.
+- [x] Add shared-cash multi-instrument backtesting.
+- [x] Add a paper-first execution adapter with explicit live-mode guard.
 
 ## Disclaimer
 
