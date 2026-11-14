@@ -24,7 +24,7 @@ test("performance summary calculates returns, drawdown and trade statistics", ()
     equityCurve: [{ equity: 100 }, { equity: 110 }, { equity: 105 }, { equity: 108 }],
     trades: [{ pnl: 12 }, { pnl: -4 }],
   }, { periodsPerYear: 3 });
-  assert.equal(summary.totalReturn, 0.08);
+  assert.ok(Math.abs(summary.totalReturn - 0.08) < 1e-12);
   assert.equal(summary.maxDrawdown, 5 / 110);
   assert.equal(summary.tradeCount, 2);
   assert.equal(summary.winRate, 0.5);
