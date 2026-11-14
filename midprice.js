@@ -1,44 +1,49 @@
-import { fetchLast20DaysDailyCandles, fetchLast20FiveMinCandlesRobust } from "./historicaldata.js";
+import {
+  fetchLast20DaysDailyCandles,
+  fetchLast20FiveMinCandlesRobust,
+} from "./historicaldata.js";
 
-export async function getStockMidPrices(stockName, exchange = "NSE") {
-  console.log(`\n📊 Fetching data for: ${stockName} (${exchange}) ...`);
+function calculateMidPrices(candles) {
+  if (!Array.isArray(candles)) {
+    throw new TypeError("candles must be an array");
+  }
 
-  // Fetch data
-  const fiveMinCandles = await fetchLast20FiveMinCandlesRobust(stockName, exchange);
-  const dailyCandles = await fetchLast20DaysDailyCandles(stockName, exchange);
-
-  // Helper: compute mid price = (high + low) / 2
-  const computeMidPrices = (candles) => {
-    if (!Array.isArray(candles) || candles.length === 0) return [];
-    return candles.map((c) => ((c[1] + c[2]) / 2).toFixed(2)); // [open, high, low, close, volume]
-  };
-
-  // Calculate mid prices
-  const fiveMinMidPrices = computeMidPrices(fiveMinCandles);
-  const dailyMidPrices = computeMidPrices(dailyCandles);
-
-  console.log(`✅ Got ${fiveMinCandles.length} five-min and ${dailyCandles.length} daily candles.`);
-  console.log(`📈 Mid Prices ready for ${stockName}.\n`);
-
-  return {
-    stock: stockName,
-    fiveMinMidPrices,
-    dailyMidPrices,
-  };
+  return candles.map((candle, index) => {
+    if (!Array.isArray(candle) || candle.length < 3) {
+      throw new TypeError(`Invalid OHLCV candle at index ${index}`);
+    }
+    const high = Number(candle[1]);
+    const low = Number(candle[2]);
+    if (!Number.isFinite(high) || !Number.isFinite(low) || high < low) {
+      throw new RangeError(`Invalid high/low values at candle index ${index}`);
+    }
+    return Number(((high + low) / 2).toFixed(2));
+  });
 }
 
-// Example run
-(async () => {
-  const tcsData = await getStockMidPrices("TCS", "NSE");
-  console.log("TCS 5-min mid prices:", tcsData.fiveMinMidPrices);
-  console.log("TCS daily mid prices:", tcsData.dailyMidPrices);
+/**
+ * Fetch daily and intraday candles and derive mid-price series.
+ * No network calls occur merely by importing this module.
+ */
+export async function getStockMidPrices(stockName, exchange = "NSE") {
+  if (typeof stockName !== "string" || !stockName.trim()) {
+    throw new TypeError("stockName must be a non-empty string");
+  }
 
-  const relianceData = await getStockMidPrices("RELIANCE", "NSE");
-  console.log("Reliance 5-min mid prices:", relianceData.fiveMinMidPrices);
-  console.log("Reliance daily mid prices:", relianceData.dailyMidPrices);
+  const symbol = stockName.trim().toUpperCase();
+  const [fiveMinCandles, dailyCandles] = await Promise.all([
+    fetchLast20FiveMinCandlesRobust(symbol, exchange),
+    fetchLast20DaysDailyCandles(symbol, exchange),
+  ]);
 
-
-  const hdfcData = await getStockMidPrices("HDFCBANK", "NSE");
-  console.log("hdfc 5-min mid prices:", hdfcData.fiveMinMidPrices);
-  console.log("hdfc daily mid prices:", hdfcData.dailyMidPrices);
-})();
+  return {
+    stock: symbol,
+    exchange,
+    fiveMinMidPrices: calculateMidPrices(fiveMinCandles),
+    dailyMidPrices: calculateMidPrices(dailyCandles),
+    candleCounts: {
+      fiveMinute: fiveMinCandles.length,
+      daily: dailyCandles.length,
+    },
+  };
+}
