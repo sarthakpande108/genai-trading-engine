@@ -2,7 +2,7 @@ name: Node.js CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
   pull_request:
     branches: [main]
 
@@ -16,7 +16,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install dependencies and synchronize lockfile
+          cache: npm
+      - name: Install dependencies
         run: npm install --ignore-scripts
+      - name: Verify clean install from lockfile
+        run: npm ci --ignore-scripts
       - name: Run tests
         run: npm test
