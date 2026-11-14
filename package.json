@@ -1,9 +1,9 @@
 {
   "name": "ai_bot",
   "version": "1.0.0",
-  "description": "Broker-connected market data and technical analysis utilities for experimental GenAI trading workflows",
+  "description": "Broker-connected market data, technical analysis, risk, and backtesting toolkit",
   "type": "module",
-  "main": "main.js",
+  "main": "index.js",
   "scripts": {
     "start": "node main.js",
     "test": "node --test"
