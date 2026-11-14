@@ -19,12 +19,14 @@ const ANALYSIS_SCHEMA = {
     risks: { type: "ARRAY", items: { type: "STRING" } },
     scenario: { type: "STRING" },
     dataLimitations: { type: "ARRAY", items: { type: "STRING" } },
+    marketContextAnalysis: { type: "STRING" },
+    newsAnalysis: { type: "STRING" },
   },
   required: [
     "symbol", "outlook", "horizon", "directionalProbabilityPct", "confidenceLabel",
     "executiveSummary", "trendAnalysis", "indicatorAnalysis", "bullishFactors",
     "bearishFactors", "supportLevels", "resistanceLevels", "invalidationCondition",
-    "risks", "scenario", "dataLimitations",
+    "risks", "scenario", "dataLimitations", "marketContextAnalysis", "newsAnalysis",
   ],
 };
 
@@ -95,7 +97,7 @@ function buildTimeframeAnalysis(rows, label) {
  * Builds a deterministic, auditable feature payload from broker OHLCV candles.
  * Does not call Gemini and can be tested independently.
  */
-export function buildStockAnalysisPayload({ symbol, exchange, dailyCandles, intradayCandles }) {
+export function buildStockAnalysisPayload({ symbol, exchange, dailyCandles, intradayCandles, marketContext = null, news = null }) {
   if (typeof symbol !== "string" || !symbol.trim()) throw new TypeError("symbol is required");
   if (typeof exchange !== "string" || !exchange.trim()) throw new TypeError("exchange is required");
   return {
@@ -106,10 +108,12 @@ export function buildStockAnalysisPayload({ symbol, exchange, dailyCandles, intr
     generatedAt: new Date().toISOString(),
     daily: buildTimeframeAnalysis(dailyCandles, "daily"),
     intraday5m: buildTimeframeAnalysis(intradayCandles, "five_minute"),
+    marketContext,
+    news,
   };
 }
 
-const SYSTEM_INSTRUCTION = `You are a disciplined quantitative technical-market analyst. Analyze ONLY the supplied stock identity, OHLCV candles and calculated indicators. Do not invent live prices, fundamentals, news, events, order-book data, or indicators that are not supplied. Use both daily and five-minute data, giving the daily trend more weight and the five-minute data only for near-term confirmation or divergence. Explain confluence and conflicts between indicators; do not treat RSI thresholds or moving-average crosses as standalone trading signals. Derive support and resistance only from supplied candle highs/lows and label them approximate. Give a 1-5 trading-session directional outlook. directionalProbabilityPct is your subjective model-estimated probability that price will be higher at the end of the stated horizon, not a statistically calibrated probability or a guaranteed forecast. Keep it between 50 and 90 for directional calls; use 50 for neutral/insufficient evidence. If data are stale, inconsistent or insufficient, lower confidence and explain limitations. Never issue an unconditional buy/sell instruction. Do not recommend position size or execute trades.`;
+const SYSTEM_INSTRUCTION = `You are a disciplined quantitative technical-market analyst. Analyze ONLY the supplied stock identity, OHLCV candles, calculated indicators, market context and news articles. Treat news as unverified source material: distinguish reported facts from interpretation, cite article titles/sources/dates in your reasoning, and never infer sentiment from headline wording alone. Do not invent live prices, fundamentals, news, events, order-book data, or indicators that are not supplied. If market context or news is absent, explicitly say so. Use both daily and five-minute data, giving the daily trend more weight and the five-minute data only for near-term confirmation or divergence. Explain confluence and conflicts between indicators, benchmark/sector context and news; do not treat RSI thresholds or moving-average crosses as standalone trading signals. Derive support and resistance only from supplied candle highs/lows and label them approximate. Give a 1-5 trading-session directional outlook. directionalProbabilityPct is your subjective model-estimated probability that price will be higher at the end of the stated horizon, not a statistically calibrated probability or a guaranteed forecast. Keep it between 50 and 90 for directional calls; use 50 for neutral/insufficient evidence. If data are stale, inconsistent or insufficient, lower confidence and explain limitations. Never issue an unconditional buy/sell instruction. Do not recommend position size or execute trades.`;
 
 function extractText(response) {
   const parts = response?.candidates?.[0]?.content?.parts ?? [];
