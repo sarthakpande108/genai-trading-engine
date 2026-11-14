@@ -1,6 +1,6 @@
 # Trading Engine
 
-A modular Node.js toolkit for broker-connected market data, technical indicators, strategy research, risk sizing, and historical backtesting.
+A Gemini-powered stock-analysis engine that combines Angel One OHLCV data, technical indicators, and LLM reasoning, alongside strategy research, risk sizing, and historical backtesting.
 
 > **Status:** Experimental research software. Broker access depends on valid credentials, API availability, exchange calendars, and rate limits. The project does not submit live orders automatically and is not investment advice.
 
@@ -14,6 +14,7 @@ A modular Node.js toolkit for broker-connected market data, technical indicators
 - Deterministic SMA-crossover target-position signals.
 - Risk-based position sizing and pre-trade notional/capital checks.
 - Long/flat backtesting with next-bar-open execution, fees, slippage, and drawdown reporting.
+- Gemini stock analysis that interprets daily and five-minute OHLCV candles together with calculated technical indicators and returns structured outlooks, evidence, risks, and approximate price levels.
 - Performance analytics: CAGR, annualized volatility, Sharpe ratio, maximum drawdown, win rate, and profit factor.
 - Multi-instrument, shared-cash portfolio backtesting with no-leverage purchase checks.
 - Paper execution adapter with order-risk checks; live execution remains disabled unless explicitly enabled and supplied with a broker adapter.
@@ -35,13 +36,16 @@ A modular Node.js toolkit for broker-connected market data, technical indicators
 | `performance.js` | Backtest performance statistics |
 | `portfolio-backtest.js` | Multi-instrument shared-cash simulation |
 | `execution.js` | Guarded paper/live execution boundary |
+| `gemini-analysis.js` | OHLCV feature preparation and Gemini structured analysis |
+| `stock-analysis.js` | End-to-end Angel One data to Gemini analysis workflow |
 | `test/` | Unit tests |
 
 ## Requirements and setup
 
 - Node.js 20 or newer.
 - npm.
-- Angel One SmartAPI credentials only for broker-connected data functions.
+- Angel One SmartAPI credentials for broker-connected data functions.
+- A Gemini API key for AI analysis (create one in Google AI Studio).
 
 ```bash
 npm install
@@ -55,9 +59,11 @@ ANGEL_API_KEY=your_api_key
 ANGEL_CLIENT_CODE=your_client_code
 ANGEL_MPIN=your_mpin
 ANGEL_TOTP_SECRET=your_base32_totp_secret
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
-Never commit API keys, MPINs, TOTP secrets, access tokens, or feed tokens. The repository intentionally does not load a dotenv file automatically.
+Never commit API keys, MPINs, TOTP secrets, access tokens, or feed tokens. The repository intentionally does not load a dotenv file automatically. Gemini uses the GEMINI_MODEL environment variable when set and otherwise defaults to gemini-3.8-flash.
 
 ## Quick start: strategy research
 
@@ -90,6 +96,32 @@ const metrics = summarizeBacktest(result, { periodsPerYear: 252 });
 console.log({ result, metrics });
 ```
 
+## Gemini AI stock analysis
+
+The primary AI workflow is:
+
+`Angel One daily + five-minute OHLCV → indicator calculations → Gemini → structured stock analysis`
+
+```js
+import { analyzeStock } from "./index.js";
+
+const result = await analyzeStock({
+  symbol: "RELIANCE",
+  exchange: "NSE",
+});
+
+console.dir(result.analysis, { depth: null });
+```
+
+The workflow sends Gemini the latest 20 daily candles and latest 20 five-minute candles, plus calculated SMA(10/20), EMA(9/20), RSI(14), ATR(14), volume context, recent percentage changes, and recent high/low range. Gemini weighs the daily trend more heavily and uses intraday data for confirmation or divergence.
+
+The structured response includes:
+- Bullish, bearish, or neutral outlook and a 1–5 trading-session horizon.
+- Subjective directional probability estimate and confidence label.
+- Explanation of indicator confluence/conflicts and bullish/bearish factors.
+- Approximate support/resistance levels, invalidation condition, risks, and scenario.
+
+**Important:** Gemini is interpreting the supplied technical data; it is not receiving fundamentals, company filings, news, live order-book depth, or broader market context in this workflow. The probability is a subjective LLM estimate, not a calibrated forecast. The system does not automatically place orders. Test forecasts over time and calibrate probability estimates against out-of-sample outcomes before relying on them.
 ## Public API
 
 - `smartConnect(options?)` / `clearSmartSession()`
@@ -98,7 +130,9 @@ console.log({ result, metrics });
 - `fetchLast20DaysDailyCandles(symbol, exchange)`
 - `fetchLast20FiveMinCandlesRobust(symbol, exchange)`
 - `fetchDailyCandlesWithTimestamps(symbol, exchange)` / `fetchFiveMinuteCandlesWithTimestamps(symbol, exchange)`
-- `runPortfolioBacktest(options)`
+- `analyzeStock({ symbol, exchange })` — fetch market data and request Gemini analysis
+- `buildStockAnalysisPayload(options)` / `analyzeStockDataWithGemini(payload, options)` — lower-level, independently testable AI functions
+- `runPortfolioBacktest(options)
 - `createExecutionAdapter(options)`
 - `getStockMidPrices(symbol, exchange?)`
 - `sma(values, period)`, `ema(values, period)`, `rsi(values, period)`, `trueRange(highs, lows, closes)`, `atr(highs, lows, closes, period)`
@@ -134,6 +168,8 @@ console.log({ result, metrics });
 ## Roadmap
 
 - [ ] Add contract tests against recorded SmartAPI response fixtures.
+- [ ] Expand the market context with benchmark/index trend, sector strength, and verified news/fundamentals before calling Gemini.
+- [ ] Store prediction snapshots and evaluate directional accuracy, calibration, and performance out of sample.
 - [ ] Replace weekend-only date traversal with an exchange-calendar provider.
 - [ ] Preserve timestamps in a typed candle API.
 - [ ] Add bounded retries, rate limiting, and structured logging.
@@ -148,6 +184,7 @@ console.log({ result, metrics });
 - [x] Add timestamp-preserving candle retrieval functions.
 - [x] Add shared-cash multi-instrument backtesting.
 - [x] Add a paper-first execution adapter with explicit live-mode guard.
+- [x] Add Gemini-powered analysis of daily and intraday candles plus technical indicators.
 
 ## Disclaimer
 
