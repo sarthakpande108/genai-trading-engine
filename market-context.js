@@ -1,15 +1,18 @@
 function normalizeCandles(rows, label) {
   if (!Array.isArray(rows) || rows.length < 2) throw new RangeError(label + " needs at least 2 timestamped candles");
+  let previousTimestamp = -Infinity;
   return rows.map((row, index) => {
     if (!Array.isArray(row) || row.length < 6) throw new TypeError(label + " candle " + index + " must be [timestamp, open, high, low, close, volume]");
     const [timestamp, open, high, low, close, volume] = row;
+    const timestampMs = Date.parse(timestamp);
     const values = [open, high, low, close, volume].map(Number);
-    if (!Number.isFinite(Date.parse(timestamp)) || values.some((v) => !Number.isFinite(v)) ||
+    if (!Number.isFinite(timestampMs) || timestampMs <= previousTimestamp || values.some((v) => !Number.isFinite(v)) ||
         values.slice(0, 4).some((v) => v <= 0) || values[4] < 0 ||
         values[1] < values[2] || values[0] < values[2] || values[0] > values[1] ||
         values[3] < values[2] || values[3] > values[1]) {
       throw new TypeError(label + " contains invalid candle data at index " + index);
     }
+    previousTimestamp = timestampMs;
     return { timestamp, open: values[0], high: values[1], low: values[2], close: values[3], volume: values[4] };
   });
 }
