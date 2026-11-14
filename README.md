@@ -1,73 +1,186 @@
-# Trading Engine
+# GenAI Trading Engine
 
-A Gemini-powered stock-analysis engine that combines Angel One OHLCV data, technical indicators, and LLM reasoning, alongside strategy research, risk sizing, and historical backtesting.
+A Gemini-powered stock research and forecast-tracking engine for Indian equities. It combines Angel One SmartAPI price data, benchmark/sector context, sourced company news, technical indicators and Gemini's structured analysis. Every successful forecast can be persisted and later scored against actual closes after 1, 3 and 5 trading sessions.
 
-> **Status:** Experimental research software. Broker access depends on valid credentials, API availability, exchange calendars, and rate limits. The project does not submit live orders automatically and is not investment advice.
+> **Project status:** Experimental research software. This is not a production trading platform, a calibrated forecasting model, or investment advice. It does not automatically place orders. Broker data, exchange calendars, news coverage, rate limits and API availability can affect results.
 
-## Features
+## What this project does
 
-- Angel One SmartAPI session creation using TOTP and environment-based credentials.
-- Scrip-master download, local caching, and exact exchange/symbol token resolution.
-- Historical daily and five-minute candle retrieval, with optional timestamp-preserving APIs.
-- Mid-price derivation from OHLC candle data.
-- SMA, EMA, RSI, true-range, and ATR calculations.
-- Deterministic SMA-crossover target-position signals.
-- Risk-based position sizing and pre-trade notional/capital checks.
-- Long/flat backtesting with next-bar-open execution, fees, slippage, and drawdown reporting.
-- Gemini stock analysis that interprets daily and five-minute OHLCV candles together with calculated technical indicators and returns structured outlooks, evidence, risks, and approximate price levels.
-- Performance analytics: CAGR, annualized volatility, Sharpe ratio, maximum drawdown, win rate, and profit factor.
-- Multi-instrument, shared-cash portfolio backtesting with no-leverage purchase checks.
-- Paper execution adapter with order-risk checks; live execution remains disabled unless explicitly enabled and supplied with a broker adapter.
-- A single public entry point through `index.js`.
+For a selected NSE/BSE stock, the primary workflow:
 
-## Project structure
+1. Resolves the instrument and fetches timestamped daily and five-minute OHLCV candles from Angel One.
+2. Calculates technical features: SMA(10/20), EMA(9/20), RSI(14), ATR(14), volume context, recent range and percentage changes.
+3. Adds broader market context: NIFTY 50 benchmark trend by default, and an optional sector index supplied by the caller.
+4. Retrieves recent stock/company articles from NewsAPI when `NEWSAPI_KEY` is configured. Article source, title, publication time and URL are retained.
+5. Sends the complete evidence package to Gemini for structured bullish/bearish/neutral analysis, with an explicit separation between supplied facts and model interpretation.
+6. Saves the forecast, model probability estimate and reference close to a local JSON store.
+7. Evaluates saved forecasts against actual daily closes after 1, 3 and 5 subsequent sessions when the evaluation function is run.
 
-| Module | Responsibility |
+The repository also contains deterministic strategy research, risk sizing, backtesting, portfolio simulation and a guarded paper/live execution boundary. Those utilities are separate from the Gemini research workflow.
+
+## Architecture and data flow
+
+```mermaid
+flowchart TD
+    A[User selects stock] --> B[Angel One SmartAPI]
+    B --> C[Daily + 5-minute stock OHLCV]
+    B --> D[NIFTY 50 + optional sector candles]
+    E[NewsAPI] --> F[Normalize articles + source metadata]
+    C --> G[Technical feature builder]
+    D --> H[Market context builder]
+    F --> I[News evidence]
+    G --> J[Unified analysis payload]
+    H --> J
+    I --> J
+    J --> K[Gemini structured analysis]
+    K --> L[Forecast JSON store]
+    L --> M[Evaluation after 1 / 3 / 5 sessions]
+    B --> N[Actual future daily candles]
+    N --> M
+    M --> O[Directional accuracy + realized return]
+```
+
+### Module responsibilities
+
+| File | Responsibility |
 |---|---|
-| `index.js` | Public exports |
-| `main.js` | Angel One broker session lifecycle |
-| `utlis.js` | Scrip-master cache, token resolution, IST formatting |
-| `historicaldata.js` | Daily and intraday candle retrieval |
-| `midprice.js` | Derived mid-price series |
-| `indicator.js` | SMA, EMA, RSI, true range, and ATR |
-| `strategy.js` | SMA-crossover target-position signals |
-| `risk.js` | Position sizing and order-risk validation |
-| `backtest.js` | Long/flat backtesting with next-bar execution |
-| `performance.js` | Backtest performance statistics |
+| `index.js` | Public API exports |
+| `main.js` | Angel One session lifecycle |
+| `utlis.js` | Scrip-master cache, exact token resolution, IST formatting |
+| `historicaldata.js` | Daily and five-minute timestamped candle retrieval |
+| `indicator.js` | SMA, EMA, RSI, true range and ATR |
+| `market-context.js` | Benchmark and sector index trend/range summaries |
+| `news.js` | NewsAPI retrieval and article normalization |
+| `gemini-analysis.js` | Stock features, combined evidence payload and Gemini structured output |
+| `stock-analysis.js` | End-to-end data/context/news/Gemini workflow and forecast tracking |
+| `prediction-tracker.js` | Persistent forecast history and 1/3/5-session outcome evaluation |
+| `strategy.js` | Deterministic SMA-crossover target-position signals |
+| `risk.js` | Risk-based position sizing and order-risk checks |
+| `backtest.js` | Long/flat next-bar-open backtesting with costs |
+| `performance.js` | CAGR, volatility, Sharpe, drawdown, win rate and profit factor |
 | `portfolio-backtest.js` | Multi-instrument shared-cash simulation |
-| `execution.js` | Guarded paper/live execution boundary |
-| `gemini-analysis.js` | OHLCV feature preparation and Gemini structured analysis |
-| `stock-analysis.js` | End-to-end Angel One data to Gemini analysis workflow |
-| `test/` | Unit tests |
+| `execution.js` | Paper-first execution adapter with explicit live-mode guard |
+| `midprice.js` | Derived candle mid-price series |
+| `test/` | Unit and integration tests using mocked external APIs |
 
-## Requirements and setup
+## Setup
 
-- Node.js 20 or newer.
-- npm.
-- Angel One SmartAPI credentials for broker-connected data functions.
-- A Gemini API key for AI analysis (create one in Google AI Studio).
+### Requirements
+
+- Node.js 20+
+- npm
+- Angel One SmartAPI credentials for broker-connected market data
+- Gemini API key
+- NewsAPI key for news enrichment (optional but recommended)
+
+Install and test:
 
 ```bash
-npm install
+npm ci
 npm test
 ```
 
-Set credentials in the process environment (or a local `.env` file loaded by your own runtime):
+Set environment variables in your shell or deployment environment:
 
 ```bash
-ANGEL_API_KEY=your_api_key
+ANGEL_API_KEY=your_angel_api_key
 ANGEL_CLIENT_CODE=your_client_code
 ANGEL_MPIN=your_mpin
 ANGEL_TOTP_SECRET=your_base32_totp_secret
+
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-3.8-flash
+
+NEWSAPI_KEY=your_newsapi_key
+PREDICTION_STORE_PATH=./data/predictions.json
 ```
 
-Never commit API keys, MPINs, TOTP secrets, access tokens, or feed tokens. The repository intentionally does not load a dotenv file automatically. Gemini uses the GEMINI_MODEL environment variable when set and otherwise defaults to gemini-3.8-flash.
+`NEWSAPI_KEY` is optional. Without it, analysis still runs but the Gemini payload explicitly indicates that news is unavailable. The prediction store defaults to `./data/predictions.json`; the `data/` directory is git-ignored. Do not commit API keys, MPINs, TOTP secrets, access tokens or feed tokens. This project does not load `.env` automatically.
 
-## Quick start: strategy research
+## Run Gemini stock analysis
 
-All strategy signals are generated using the close of each bar. The backtester executes the previous bar's signal at the next bar's open.
+```js
+import { analyzeStock } from "./index.js";
+
+const result = await analyzeStock({
+  symbol: "RELIANCE",
+  exchange: "NSE",
+  companyName: "Reliance Industries",
+});
+
+console.dir(result.analysis, { depth: null });
+console.log("Saved forecast:", result.prediction);
+```
+
+By default the workflow attempts to fetch NIFTY 50 candles as benchmark context. You can add a sector index explicitly (use an exact instrument name resolvable in the Angel One scrip master):
+
+```js
+const result = await analyzeStock({
+  symbol: "INFY",
+  exchange: "NSE",
+  companyName: "Infosys",
+  marketContextSymbols: {
+    benchmark: "Nifty 50",
+    sector: "Nifty IT",
+  },
+});
+```
+
+You can also inject pre-fetched data for deterministic tests or alternate providers:
+
+```js
+const result = await analyzeStock({
+  symbol: "RELIANCE",
+  exchange: "NSE",
+  dailyCandles,       // [timestamp, open, high, low, close, volume][]
+  intradayCandles,    // five-minute rows in the same format
+  marketContext,      // optional object built by buildMarketContext()
+  news,               // optional normalized news package
+  trackPrediction: false,
+});
+```
+
+### What Gemini receives
+
+- Latest 20 daily and 20 five-minute OHLCV candles.
+- SMA(10/20), EMA(9/20), RSI(14), ATR(14), ATR as a percentage of price, volume context, percentage changes and recent highs/lows.
+- Benchmark and optional sector summaries, including recent return and position in the observed range.
+- Up to 12 recent NewsAPI articles with publisher, title, description, URL and publication timestamp.
+
+Gemini returns a structured outlook, 1–5 session horizon, subjective directional probability estimate, confidence label, evidence, support/resistance estimates, invalidation condition, risks, scenario and separate market-context/news analysis.
+
+**Data coverage matters:** this is not “all market data”. The current package does not include company financial statements, valuation, corporate filings, a complete macroeconomic dataset, market breadth, institutional flows, options positioning or full order-book depth. NewsAPI coverage and article availability depend on its plan and search results. Gemini's probability is a subjective model output, not a calibrated probability. Treat stale, missing or conflicting inputs as limitations—not as a reason to invent facts.
+
+## Prediction tracking and evaluation
+
+Every successful `analyzeStock()` call records a forecast by default. The record includes:
+
+- Unique forecast ID, symbol and exchange.
+- Forecast timestamp and the reference daily candle timestamp/close.
+- Gemini outlook, confidence, probability estimate and full structured response.
+- Pending outcome slots for 1, 3 and 5 subsequent daily sessions.
+
+Run evaluation after new trading sessions have completed:
+
+```js
+import { evaluateStockPredictions, listPredictions } from "./index.js";
+
+const evaluation = await evaluateStockPredictions();
+console.log(evaluation);
+
+const forecasts = await listPredictions();
+console.dir(forecasts, { depth: null });
+```
+
+The evaluator compares the actual close at session +1, +3 and +5 with the saved reference close. It records realized percentage return, actual direction and whether the forecast direction was correct. The evaluator is an explicit function call; schedule it with your own daily job after the market close if you want unattended tracking. It is not automatically scheduled by this library.
+
+**Evaluation caveats:** the current directional score is a simple hit/miss measure, not a complete forecast-quality report. It does not yet calculate Brier score, calibration curves, benchmark-adjusted returns, overlapping-forecast controls or statistical significance. Run evaluation regularly; the broker helper currently returns a limited recent candle window, so very old pending forecasts may no longer be matchable. The reference close is the latest daily candle returned by Angel One, which may be an in-progress session depending on when analysis is run—prefer running forecasts after market close for consistent session definitions.
+
+To disable persistence for a one-off analysis or a test, pass `trackPrediction: false`.
+
+## Strategy research and backtesting
+
+The deterministic strategy tools are separate from Gemini forecasts. Signals are computed from a completed bar close and executed at the next bar open to reduce look-ahead bias.
 
 ```js
 import { smaCrossoverSignals, runBacktest, summarizeBacktest } from "./index.js";
@@ -80,112 +193,68 @@ const bars = [
   { open: 106, close: 108 },
 ];
 
-const closes = bars.map((bar) => bar.close);
-const signals = smaCrossoverSignals(closes, { fastPeriod: 2, slowPeriod: 3 });
+const signals = smaCrossoverSignals(bars.map((bar) => bar.close), {
+  fastPeriod: 2,
+  slowPeriod: 3,
+});
 
 const result = runBacktest({
-  bars,
-  signals,
+  bars, signals,
   initialCapital: 100_000,
   quantity: 1,
   feeBps: 5,
   slippageBps: 2,
 });
 
-const metrics = summarizeBacktest(result, { periodsPerYear: 252 });
-console.log({ result, metrics });
+console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 ```
 
-## Gemini AI stock analysis
-
-The primary AI workflow is:
-
-`Angel One daily + five-minute OHLCV → indicator calculations → Gemini → structured stock analysis`
-
-```js
-import { analyzeStock } from "./index.js";
-
-const result = await analyzeStock({
-  symbol: "RELIANCE",
-  exchange: "NSE",
-});
-
-console.dir(result.analysis, { depth: null });
-```
-
-The workflow sends Gemini the latest 20 daily candles and latest 20 five-minute candles, plus calculated SMA(10/20), EMA(9/20), RSI(14), ATR(14), volume context, recent percentage changes, and recent high/low range. Gemini weighs the daily trend more heavily and uses intraday data for confirmation or divergence.
-
-The structured response includes:
-- Bullish, bearish, or neutral outlook and a 1–5 trading-session horizon.
-- Subjective directional probability estimate and confidence label.
-- Explanation of indicator confluence/conflicts and bullish/bearish factors.
-- Approximate support/resistance levels, invalidation condition, risks, and scenario.
-
-**Important:** Gemini is interpreting the supplied technical data; it is not receiving fundamentals, company filings, news, live order-book depth, or broader market context in this workflow. The probability is a subjective LLM estimate, not a calibrated forecast. The system does not automatically place orders. Test forecasts over time and calibrate probability estimates against out-of-sample outcomes before relying on them.
 ## Public API
 
+- `analyzeStock(options)` — fetch data/context/news, run Gemini and save a forecast.
+- `evaluateStockPredictions(options?)` — evaluate saved forecasts against fresh daily candles.
+- `buildStockAnalysisPayload(options)` / `analyzeStockDataWithGemini(payload, options?)` — lower-level AI functions.
+- `buildMarketContext(options)` — summarize benchmark and sector candles.
+- `fetchStockNews(options)` / `normalizeNewsArticles(articles)` — NewsAPI integration.
+- `recordPrediction(options)`, `evaluatePendingPredictions(options)`, `listPredictions(options?)` — prediction persistence/evaluation.
 - `smartConnect(options?)` / `clearSmartSession()`
-- `downloadScripMaster(cachePath?, options?)`
-- `findSymbolToken(master, exchange, symbol)`
-- `fetchLast20DaysDailyCandles(symbol, exchange)`
-- `fetchLast20FiveMinCandlesRobust(symbol, exchange)`
+- `downloadScripMaster(cachePath?, options?)`, `findSymbolToken(master, exchange, symbol)`, `formatToIST(date)`
 - `fetchDailyCandlesWithTimestamps(symbol, exchange)` / `fetchFiveMinuteCandlesWithTimestamps(symbol, exchange)`
-- `analyzeStock({ symbol, exchange })` — fetch market data and request Gemini analysis
-- `buildStockAnalysisPayload(options)` / `analyzeStockDataWithGemini(payload, options)` — lower-level, independently testable AI functions
-- `runPortfolioBacktest(options)
-- `createExecutionAdapter(options)`
-- `getStockMidPrices(symbol, exchange?)`
+- `fetchLast20DaysDailyCandles(symbol, exchange)` / `fetchLast20FiveMinCandlesRobust(symbol, exchange)`
 - `sma(values, period)`, `ema(values, period)`, `rsi(values, period)`, `trueRange(highs, lows, closes)`, `atr(highs, lows, closes, period)`
 - `smaCrossoverSignals(closes, options?)`
 - `calculatePositionSize(options)`, `validateOrderRisk(options)`
-- `runBacktest(options)`
-- `summarizeBacktest(result, options?)`
+- `runBacktest(options)`, `summarizeBacktest(result, options?)`
+- `runPortfolioBacktest(options)`, `createExecutionAdapter(options)`
+- `getStockMidPrices(symbol, exchange?)`
 
-## Research assumptions and limitations
+## Important assumptions and limitations
 
-- The legacy candle helpers return `[open, high, low, close, volume]`; the timestamp-preserving helpers return `[timestamp, open, high, low, close, volume]`.
-- The mid-price is `(high + low) / 2`. It is not an executable quote or guaranteed fill price.
-- SMA crossover signals are long/flat only. A signal is calculated after a completed close and is eligible for execution at the next bar open.
-- The backtester models fixed quantity, fees, and slippage. It does not model margin, partial fills, taxes, financing, dividends, corporate actions, or market impact.
-- Performance annualization assumes equally spaced observations. Choose `periodsPerYear` to match the bar frequency (for example, 252 for daily observations); do not use daily annualization for intraday bars.
-- Exchange holidays are not fully modeled by weekend checks. Missing sessions should be treated as normal and validated against an exchange calendar.
-- Broker responses can be incomplete, delayed, throttled, or unavailable. Validate data quality and sample counts before using data in research.
-- The portfolio simulator is long-only, fixed-quantity and cash-constrained. It does not support shorts, margin, partial fills, portfolio rebalancing, or asynchronous fills.
-- The execution adapter defaults to paper mode. Live mode requires an explicit opt-in and an injected broker submit function; it is not pre-wired to Angel One order placement. Never enable live mode without independent review and broker-side safeguards.
-- Exchange holidays are not fully modeled by the historical retrieval helpers. A proper exchange-calendar integration remains outstanding.
-- This is not a production live-trading system. Broker order reconciliation, exchange-calendar integration, persistent portfolio state, operational monitoring, and regulatory controls remain outstanding.
-
-## Engineering principles
-
-1. Fail closed when instrument identity cannot be resolved.
-2. Avoid look-ahead bias by executing signals no earlier than the next bar.
-3. Include transaction costs in backtest assumptions.
-4. Keep position sizing and order checks separate from order placement.
-5. Keep date/time conversion explicit and testable.
-6. Validate external API payloads at module boundaries.
-7. Never interpret a successful data fetch as a trading signal.
+- Timestamped candle rows use `[timestamp, open, high, low, close, volume]`; legacy helpers return `[open, high, low, close, volume]`.
+- Index/sector symbols must resolve exactly through the downloaded Angel One scrip master. Sector context is optional and must be configured; it is not automatically inferred for every stock.
+- News is retrieved by a keyword query. Symbol-only searches can be ambiguous; pass `companyName` or `newsQuery` to improve relevance.
+- News articles are external, time-stamped source material, not verified corporate disclosures. Review original links before relying on them.
+- Weekend-only date handling is not a substitute for an exchange holiday calendar.
+- Broker responses may be incomplete, delayed, throttled or unavailable. Validate timestamps and candle continuity.
+- The mid-price `(high + low) / 2` is not an executable quote or guaranteed fill price.
+- Backtesting is long/flat and does not model margin, partial fills, taxes, financing, dividends, corporate actions or market impact.
+- Portfolio simulation is long-only, fixed-quantity and cash-constrained; it does not model shorts, margin, rebalancing or asynchronous fills.
+- The execution adapter defaults to paper mode. Live mode requires explicit opt-in and an injected broker submit function; it is not wired to Angel One order placement.
 
 ## Roadmap
 
-- [ ] Add contract tests against recorded SmartAPI response fixtures.
-- [ ] Expand the market context with benchmark/index trend, sector strength, and verified news/fundamentals before calling Gemini.
-- [ ] Store prediction snapshots and evaluate directional accuracy, calibration, and performance out of sample.
-- [ ] Replace weekend-only date traversal with an exchange-calendar provider.
-- [ ] Preserve timestamps in a typed candle API.
-- [ ] Add bounded retries, rate limiting, and structured logging.
-- [ ] Add portfolio-level exposure constraints, rebalancing and sector limits.
-- [ ] Add a maintained exchange-calendar provider and holiday-aware historical date traversal.
-- [ ] Add bounded retries, request throttling and structured logs around broker calls.
-- [ ] Add broker-specific order adapter only after paper-trading and reconciliation tests.
-- [x] Add deterministic indicators and unit tests.
-- [x] Add risk sizing and pre-trade validation primitives.
-- [x] Add next-bar-open backtesting with transaction costs.
-- [x] Add a sample SMA-crossover strategy and performance analytics.
-- [x] Add timestamp-preserving candle retrieval functions.
-- [x] Add shared-cash multi-instrument backtesting.
-- [x] Add a paper-first execution adapter with explicit live-mode guard.
-- [x] Add Gemini-powered analysis of daily and intraday candles plus technical indicators.
+- [x] Gemini analysis of stock daily/intraday candles and indicators.
+- [x] Benchmark and optional sector market context.
+- [x] NewsAPI article enrichment with source and publication metadata.
+- [x] Persistent forecasts and 1/3/5-session directional outcome tracking.
+- [x] Unit tests for context, news normalization and prediction scoring.
+- [ ] Exchange-calendar integration and robust historical data windows.
+- [ ] Scheduled evaluation worker and retention/backup policy for forecast history.
+- [ ] Brier score, calibration, benchmark-relative returns and cohort-level reporting.
+- [ ] Better company/entity resolution and duplicate/relevance filtering for news.
+- [ ] Fundamentals, filings, market breadth, macro data and corporate-event context.
+- [ ] Broker response fixtures, retries, rate limiting and structured observability.
 
 ## Disclaimer
 
-For educational and engineering experimentation only. This repository does not provide financial advice. Historical performance is not a guarantee of future results. Independently validate data quality, broker terms, market rules, and strategy behavior before considering any live-market use.
+For educational and engineering experimentation only. Nothing in this project is investment advice or a recommendation to buy, sell or hold a security. Historical outcomes do not guarantee future results. Independently validate data quality, news sources, broker terms, exchange rules and model behavior before using outputs in financial decisions.
