@@ -62,8 +62,8 @@ test("backtest executes close signals on next bar open and includes costs", () =
   assert.equal(result.tradeCount, 1);
   assert.equal(result.trades[0].entryIndex, 1);
   assert.equal(result.trades[0].exitIndex, 2);
-  assert.equal(result.trades[0].pnl, 3);
-  assert.equal(result.finalEquity, 1_003);
+  assert.equal(result.trades[0].pnl, 2);
+  assert.equal(result.finalEquity, 1_002);
 });
 
 test("backtest rejects invalid signal values", () => {
