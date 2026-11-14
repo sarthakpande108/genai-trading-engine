@@ -14,3 +14,6 @@ export { smaCrossoverSignals } from "./strategy.js";
 export { summarizeBacktest } from "./performance.js";
 export { runPortfolioBacktest } from "./portfolio-backtest.js";
 export { createExecutionAdapter } from "./execution.js";
+
+export { buildStockAnalysisPayload, analyzeStockDataWithGemini } from "./gemini-analysis.js";
+export { analyzeStock } from "./stock-analysis.js";
