@@ -40,7 +40,7 @@ export function buildMarketContext({ benchmarkCandles, sectorCandles, benchmarkN
   return {
     benchmark,
     sector,
-    sectorRelativeChangePct: benchmark && sector ? sector.changePct - benchmark.changePct : null,
+    sectorRelativeChangePct: benchmark && sector ? sector.changeWindowPct - benchmark.changeWindowPct : null,
     generatedAt: new Date().toISOString(),
     limitations: ["Benchmark and sector context use only the supplied recent daily candles; they are not a complete macroeconomic or market-breadth dataset."],
   };
