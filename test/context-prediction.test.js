@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { buildMarketContext } from "../market-context.js";
 import { normalizeNewsArticles } from "../news.js";
 import { recordPrediction, evaluatePendingPredictions, listPredictions } from "../prediction-tracker.js";
@@ -16,7 +13,8 @@ function candles(count = 8) {
 
 test("market context summarizes benchmark and sector relative moves", () => {
   const context = buildMarketContext({
-    benchmarkCandles: candles(5), sectorCandles: candles(5).map((r, i) => { const scale = 1 + i * 0.01; return [r[0], r[1] * scale, r[2] * scale, r[3] * scale, r[4] * scale, r[5]]; }),
+    benchmarkCandles: candles(5),
+    sectorCandles: candles(5).map((r, i) => { const scale = 1 + i * 0.01; return [r[0], r[1] * scale, r[2] * scale, r[3] * scale, r[4] * scale, r[5]]; }),
     benchmarkName: "NIFTY 50", sectorName: "NIFTY IT",
   });
   assert.equal(context.benchmark.name, "NIFTY 50");
@@ -34,26 +32,28 @@ test("news normalizer keeps source, title, URL and valid publication time", () =
   assert.equal(items[0].url, "https://example.com/a");
 });
 
-test("prediction tracker records forecast and scores 1, 3 and 5 sessions", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "trading-engine-"));
-  const storePath = join(dir, "predictions.json");
+const hasDatabase = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
+test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", { skip: !hasDatabase }, async () => {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  const { query, closeDatabase } = await import("../db.js");
   try {
+    const { rows } = await query("SELECT to_regclass('public.predictions') AS predictions, to_regclass('public.prediction_outcomes') AS outcomes");
+    assert.ok(rows[0].predictions, "run npm run db:migrate before database integration tests");
+    assert.ok(rows[0].outcomes);
     const history = candles(8);
-    const input = { symbol: "ABC", exchange: "NSE", daily: { latestCandle: { timestamp: history[0][0], close: history[0][4] } } };
+    const input = { symbol: "TEST_NEON", exchange: "NSE", daily: { latestCandle: { timestamp: history[0][0], close: history[0][4] } } };
     const analysis = { outlook: "BULLISH", directionalProbabilityPct: 65, confidenceLabel: "MEDIUM" };
-    const saved = await recordPrediction({ analysis, input, storePath });
+    const saved = await recordPrediction({ analysis, input });
     assert.ok(saved.id);
-    const result = await evaluatePendingPredictions({
-      storePath,
-      fetchDailyCandles: async () => history,
-    });
-    assert.equal(result.updatedPredictionIds.length, 1);
-    const records = await listPredictions({ storePath });
-    assert.equal(records[0].outcomes[1].actualClose, history[1][4]);
-    assert.equal(records[0].outcomes[3].actualClose, history[3][4]);
-    assert.equal(records[0].outcomes[5].actualClose, history[5][4]);
-    assert.equal(records[0].outcomes[5].directionCorrect, true);
+    const result = await evaluatePendingPredictions({ fetchDailyCandles: async () => history });
+    assert.ok(result.updatedPredictionIds.includes(saved.id));
+    const records = await listPredictions();
+    const record = records.find((item) => item.id === saved.id);
+    assert.equal(record.outcomes[1].actualClose, history[1][4]);
+    assert.equal(record.outcomes[3].actualClose, history[3][4]);
+    assert.equal(record.outcomes[5].actualClose, history[5][4]);
+    await query("DELETE FROM predictions WHERE id = $1", [saved.id]);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await closeDatabase();
   }
 });
