@@ -42,7 +42,7 @@ test("order risk guard reports violations without side effects", () => {
       side: "BUY", quantity: 20, price: 100,
       maxOrderNotional: 1_000, availableCapital: 1_500,
     }).violations,
-    ["MAX_ORDER_NOTIONAL_EXCEEDED"]
+    ["MAX_ORDER_NOTIONAL_EXCEEDED", "INSUFFICIENT_AVAILABLE_CAPITAL"]
   );
 });
 
