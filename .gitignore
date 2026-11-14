@@ -47,3 +47,6 @@ __pycache__/
 
 # Broker instrument master is downloaded and cached locally; do not version it
 scripMaster.json
+
+# Local prediction history and generated market data
+/data/
