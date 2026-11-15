@@ -65,17 +65,16 @@ export async function executePaperPortfolioOrder({
     const fee = quantity * price * feeBps / 10_000;
     const notional = quantity * price;
     let rejectionReason = null;
-    let position = null;
+    const positionResult = await client.query(
+      "SELECT * FROM paper_portfolio_positions WHERE portfolio_id=$1 AND symbol=$2 FOR UPDATE",
+      [portfolioId, normalizedSymbol]
+    );
+    const position = positionResult.rows[0] || null;
     if (side === "BUY" && notional + fee > Number(portfolio.cash_balance)) {
       rejectionReason = "INSUFFICIENT_CASH";
     }
-    if (side === "SELL") {
-      const positionResult = await client.query(
-        "SELECT * FROM paper_portfolio_positions WHERE portfolio_id=$1 AND symbol=$2 FOR UPDATE",
-        [portfolioId, normalizedSymbol]
-      );
-      position = positionResult.rows[0] || null;
-      if (!position || Number(position.quantity) < quantity) rejectionReason = "INSUFFICIENT_POSITION";
+    if (side === "SELL" && (!position || Number(position.quantity) < quantity)) {
+      rejectionReason = "INSUFFICIENT_POSITION";
     }
 
     if (rejectionReason) {
