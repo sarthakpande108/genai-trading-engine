@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS paper_portfolio_orders (
   rejection_reason TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK ((status = 'FILLED' AND fill_price > 0 AND filled_quantity = quantity) OR status = 'REJECTED')
+  CHECK ((status = 'FILLED' AND fill_price IS NOT NULL AND fill_price > 0 AND filled_quantity = quantity) OR status = 'REJECTED')
 );
 CREATE INDEX IF NOT EXISTS paper_portfolio_orders_history_idx
   ON paper_portfolio_orders(portfolio_id, created_at DESC);
