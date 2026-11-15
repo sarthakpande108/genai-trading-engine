@@ -151,7 +151,7 @@ test("Neon full application flow: startup, AI analysis, forecast outcomes and pa
     assert.equal(finalOrders[0].count, 2, "rejected paper sell must not create an order");
   } finally {
     if (query) {
-      await query("DELETE FROM predictions WHERE id = $1", [predictionId].filter(Boolean)).catch(() => {});
+      if (predictionId) await query("DELETE FROM predictions WHERE id = $1", [predictionId]).catch(() => {});
       await query("DELETE FROM paper_orders WHERE symbol = $1", [symbol]).catch(() => {});
       await query("DELETE FROM paper_positions WHERE symbol = $1", [symbol]).catch(() => {});
     }
