@@ -17,4 +17,11 @@ export { analyzeStock, evaluateStockPredictions } from "./stock-analysis.js";
 export { buildMarketContext } from "./market-context.js";
 export { fetchStockNews, normalizeNewsArticles } from "./news.js";
 export { recordPrediction, evaluatePendingPredictions, listPredictions } from "./prediction-tracker.js";
+export {
+  createPaperPortfolio,
+  getPaperPortfolio,
+  executePaperPortfolioOrder,
+  markPaperPortfolio,
+  getPaperPortfolioReport,
+} from "./paper-portfolio.js";
 export { query as queryDatabase, closeDatabase } from "./db.js";
