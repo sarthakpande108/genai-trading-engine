@@ -2,7 +2,7 @@
 import { smartConnect } from "./main.js";
 import { downloadScripMaster, findSymbolToken, formatToIST } from "./utlis.js";
 
-export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp = false } = {}) {
+export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp = false, from, to } = {}) {
   try {
     const sessionData = await smartConnect();
     if (!sessionData) throw new Error("Login failed");
@@ -14,6 +14,30 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
     const token = master ? findSymbolToken(master, exchange, tradingsymbol) : null;
     if (!token) throw new Error(`No instrument token found for ${exchange}:${tradingsymbol}`);
     const symboltoken = token;
+
+    // Historical evaluation requests must fetch the full range from the forecast candle,
+    // rather than silently truncating to the latest 20 sessions.
+    if (from !== undefined && from !== null) {
+      const fromDate = new Date(from);
+      const toDate = to === undefined || to === null ? new Date() : new Date(to);
+      if (!Number.isFinite(fromDate.getTime()) || !Number.isFinite(toDate.getTime()) || fromDate > toDate) {
+        throw new RangeError("from/to must be valid dates with from <= to");
+      }
+      const response = await smart_api.getCandleData({
+        exchange,
+        symboltoken: String(symboltoken),
+        interval: "ONE_DAY",
+        fromdate: formatToIST(fromDate),
+        todate: formatToIST(toDate),
+      });
+      const historical = (Array.isArray(response?.data) ? response.data : [])
+        .filter((row) => Array.isArray(row) && row.length >= 6 && Number.isFinite(Date.parse(row[0])))
+        .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+      const unique = historical.filter((row, index) =>
+        index === 0 || Date.parse(row[0]) !== Date.parse(historical[index - 1][0])
+      );
+      return includeTimestamp ? unique : unique.map((row) => row.slice(1));
+    }
 
     const now = new Date();
 
@@ -247,8 +271,8 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, {
   }
 
 /** Timestamp-preserving daily candle API. Each row is [timestamp, open, high, low, close, volume]. */
-export function fetchDailyCandlesWithTimestamps(tradingsymbol, exchange) {
-  return fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp: true });
+export function fetchDailyCandlesWithTimestamps(tradingsymbol, exchange, options = {}) {
+  return fetchLast20DaysDailyCandles(tradingsymbol, exchange, { ...options, includeTimestamp: true });
 }
 
 /** Timestamp-preserving five-minute candle API. Each row is [timestamp, open, high, low, close, volume]. */

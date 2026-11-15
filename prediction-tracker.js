@@ -1,95 +1,129 @@
-import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { query, withTransaction } from "./db.js";
 
-const writeQueues = new Map();
-
-async function readStore(storePath) {
-  try {
-    const parsed = JSON.parse(await fs.readFile(storePath, "utf8"));
-    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.predictions)) throw new Error("Invalid prediction store format");
-    return parsed;
-  } catch (error) {
-    if (error.code === "ENOENT") return { version: 1, predictions: [] };
-    throw error;
-  }
+function normalizePrediction(row) {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    exchange: row.exchange,
+    forecastedAt: new Date(row.forecasted_at).toISOString(),
+    baseCandleTimestamp: new Date(row.base_candle_timestamp).toISOString(),
+    baseClose: Number(row.base_close),
+    outlook: row.outlook,
+    directionalProbabilityPct: Number(row.directional_probability_pct),
+    confidenceLabel: row.confidence_label,
+    horizonSessions: row.horizon_sessions,
+    outcomes: row.outcomes || { 1: null, 3: null, 5: null },
+    forecast: row.forecast,
+  };
 }
 
-async function updateStore(storePath, updater) {
-  const previous = writeQueues.get(storePath) || Promise.resolve();
-  const next = previous.then(async () => {
-    const store = await readStore(storePath);
-    const result = await updater(store);
-    await fs.mkdir((await import("node:path")).dirname(storePath), { recursive: true });
-    const tempPath = storePath + "." + randomUUID() + ".tmp";
-    await fs.writeFile(tempPath, JSON.stringify(store, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
-    await fs.rename(tempPath, storePath);
-    return result;
-  });
-  writeQueues.set(storePath, next.catch(() => {}));
-  return next;
-}
-
-/** Persist the exact forecast and the close/timestamp from which it was made. */
-export async function recordPrediction({ analysis, input, storePath = process.env.PREDICTION_STORE_PATH || "./data/predictions.json" } = {}) {
+export async function recordPrediction({ analysis, input } = {}) {
   const base = input?.daily?.latestCandle;
-  if (!analysis || !input?.symbol || !base || !Number.isFinite(Number(base.close)) || !Number.isFinite(Date.parse(base.timestamp))) {
+  if (!analysis || !input?.symbol || !base ||
+      !Number.isFinite(Number(base.close)) || Number(base.close) <= 0 ||
+      !Number.isFinite(Date.parse(base.timestamp))) {
     throw new TypeError("analysis and a valid daily latestCandle are required to record a prediction");
   }
+  if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(analysis.outlook) ||
+      !Number.isFinite(analysis.directionalProbabilityPct) ||
+      analysis.directionalProbabilityPct < 50 || analysis.directionalProbabilityPct > 90 ||
+      (analysis.outlook === "NEUTRAL" && analysis.directionalProbabilityPct !== 50)) {
+    throw new TypeError("analysis contains invalid forecast direction or probability");
+  }
   const record = {
-    id: randomUUID(), symbol: input.symbol, exchange: input.exchange,
+    id: randomUUID(),
+    symbol: input.symbol.trim().toUpperCase(),
+    exchange: String(input.exchange || "NSE").trim().toUpperCase(),
     forecastedAt: new Date().toISOString(),
-    baseCandleTimestamp: base.timestamp, baseClose: Number(base.close),
+    baseCandleTimestamp: new Date(base.timestamp).toISOString(),
+    baseClose: Number(base.close),
     outlook: analysis.outlook,
     directionalProbabilityPct: analysis.directionalProbabilityPct,
     confidenceLabel: analysis.confidenceLabel,
     horizonSessions: [1, 3, 5],
-    outcomes: { 1: null, 3: null, 5: null },
     forecast: analysis,
   };
-  await updateStore(storePath, (store) => { store.predictions.push(record); return record; });
-  return { id: record.id, storePath, baseClose: record.baseClose, horizonSessions: record.horizonSessions };
+  await query(
+    `INSERT INTO predictions
+      (id, symbol, exchange, forecasted_at, base_candle_timestamp, base_close,
+       outlook, directional_probability_pct, confidence_label, horizon_sessions, forecast)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
+    [record.id, record.symbol, record.exchange, record.forecastedAt,
+      record.baseCandleTimestamp, record.baseClose, record.outlook,
+      record.directionalProbabilityPct, record.confidenceLabel,
+      record.horizonSessions, JSON.stringify(record.forecast)]
+  );
+  return { id: record.id, baseClose: record.baseClose, horizonSessions: record.horizonSessions };
 }
 
 /**
  * Score pending forecasts against timestamped daily candles.
- * fetchDailyCandles(symbol, exchange) must return [timestamp, open, high, low, close, volume] rows.
+ * The callback must return ascending [timestamp, open, high, low, close, volume] rows.
  */
-export async function evaluatePendingPredictions({
-  fetchDailyCandles, storePath = process.env.PREDICTION_STORE_PATH || "./data/predictions.json",
-} = {}) {
+export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
   if (typeof fetchDailyCandles !== "function") throw new TypeError("fetchDailyCandles callback is required");
-  return updateStore(storePath, async (store) => {
-    const symbols = [...new Set(store.predictions.filter((p) => [1, 3, 5].some((h) => !p.outcomes[h])).map((p) => p.symbol + "|" + p.exchange))];
-    const candleMap = new Map();
-    await Promise.all(symbols.map(async (key) => {
-      const [symbol, exchange] = key.split("|");
-      candleMap.set(key, await fetchDailyCandles(symbol, exchange));
-    }));
-    const updated = [];
-    for (const prediction of store.predictions) {
-      const rows = candleMap.get(prediction.symbol + "|" + prediction.exchange);
-      if (!Array.isArray(rows)) continue;
-      const baseIndex = rows.findIndex((row) => row?.[0] === prediction.baseCandleTimestamp);
-      if (baseIndex < 0) continue;
-      for (const horizon of [1, 3, 5]) {
-        if (prediction.outcomes[horizon] || !rows[baseIndex + horizon]) continue;
-        const row = rows[baseIndex + horizon];
-        const actualClose = Number(row[4]);
-        if (!Number.isFinite(actualClose) || actualClose <= 0) continue;
-        const returnPct = ((actualClose / prediction.baseClose) - 1) * 100;
-        const actualDirection = returnPct > 0 ? "BULLISH" : returnPct < 0 ? "BEARISH" : "NEUTRAL";
-        prediction.outcomes[horizon] = {
-          evaluatedAt: new Date().toISOString(), actualTimestamp: row[0],
-          actualClose, returnPct, actualDirection,
-          directionCorrect: prediction.outlook === "NEUTRAL" ? actualDirection === "NEUTRAL" : prediction.outlook === actualDirection,
-        };
-      }
-      updated.push(prediction.id);
+  const { rows: pending } = await query(
+    `SELECT p.*,
+       COALESCE(jsonb_object_agg(o.horizon_sessions, jsonb_build_object(
+         'evaluatedAt', o.evaluated_at, 'actualTimestamp', o.actual_timestamp,
+         'actualClose', o.actual_close, 'returnPct', o.return_pct,
+         'actualDirection', o.actual_direction, 'directionCorrect', o.direction_correct
+       )) FILTER (WHERE o.prediction_id IS NOT NULL), '{}'::jsonb) AS outcomes
+     FROM predictions p
+     LEFT JOIN prediction_outcomes o ON o.prediction_id = p.id
+     GROUP BY p.id
+     ORDER BY p.forecasted_at ASC`
+  );
+  const updated = [];
+  for (const prediction of pending) {
+    const outcomes = prediction.outcomes || {};
+    const missing = [1, 3, 5].filter((h) => !outcomes[String(h)]);
+    if (!missing.length) continue;
+    const rows = await fetchDailyCandles(prediction.symbol, prediction.exchange, {
+      // Include the base session even when the broker API treats fromdate as exclusive.
+      from: new Date(new Date(prediction.base_candle_timestamp).getTime() - 24 * 60 * 60 * 1000),
+    });
+    if (!Array.isArray(rows)) continue;
+    const baseTime = new Date(prediction.base_candle_timestamp).getTime();
+    const ordered = [...rows].sort((a, b) => Date.parse(a?.[0]) - Date.parse(b?.[0]));
+    const baseIndex = ordered.findIndex((row) => Date.parse(row?.[0]) === baseTime);
+    if (baseIndex < 0) continue;
+    for (const horizon of missing) {
+      const row = ordered[baseIndex + horizon];
+      if (!row) continue;
+      const actualClose = Number(row[4]);
+      if (!Number.isFinite(actualClose) || actualClose <= 0) continue;
+      const returnPct = (actualClose / Number(prediction.base_close) - 1) * 100;
+      const actualDirection = returnPct > 0 ? "BULLISH" : returnPct < 0 ? "BEARISH" : "NEUTRAL";
+      const directionCorrect = prediction.outlook === "NEUTRAL"
+        ? actualDirection === "NEUTRAL"
+        : prediction.outlook === actualDirection;
+      await query(
+        `INSERT INTO prediction_outcomes
+          (prediction_id, horizon_sessions, actual_timestamp, actual_close, return_pct, actual_direction, direction_correct)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (prediction_id, horizon_sessions) DO NOTHING`,
+        [prediction.id, horizon, new Date(row[0]).toISOString(), actualClose,
+          returnPct, actualDirection, directionCorrect]
+      );
     }
-    return { updatedPredictionIds: updated, totalPredictions: store.predictions.length };
-  });
+    updated.push(prediction.id);
+  }
+  return { updatedPredictionIds: updated, totalPredictions: pending.length };
 }
 
-export async function listPredictions({ storePath = process.env.PREDICTION_STORE_PATH || "./data/predictions.json" } = {}) {
-  return (await readStore(storePath)).predictions;
+export async function listPredictions() {
+  const { rows } = await query(
+    `SELECT p.*,
+       COALESCE(jsonb_object_agg(o.horizon_sessions, jsonb_build_object(
+         'evaluatedAt', o.evaluated_at, 'actualTimestamp', o.actual_timestamp,
+         'actualClose', o.actual_close, 'returnPct', o.return_pct,
+         'actualDirection', o.actual_direction, 'directionCorrect', o.direction_correct
+       )) FILTER (WHERE o.prediction_id IS NOT NULL), '{}'::jsonb) AS outcomes
+     FROM predictions p
+     LEFT JOIN prediction_outcomes o ON o.prediction_id = p.id
+     GROUP BY p.id ORDER BY p.forecasted_at DESC`
+  );
+  return rows.map(normalizePrediction);
 }
