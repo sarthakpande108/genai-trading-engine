@@ -17,9 +17,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install dependencies
+      - name: Install dependencies and synchronize lockfile
         run: npm install --ignore-scripts
-      - name: Verify clean install from lockfile
+      - name: Verify clean install
         run: npm ci --ignore-scripts
-      - name: Run tests
+      - name: Run unit tests
         run: npm test
+      - name: Run Neon PostgreSQL smoke test
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL is not configured; skipping Neon integration smoke test."
+            exit 0
+          fi
+          npm run db:smoke
