@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "./db.js";
+import {
+  calculateAverageCost,
+  calculateSellRealizedPnl,
+  calculatePortfolioValuation,
+} from "./paper-portfolio-math.js";
 
 function positive(value, name) {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(name + " must be positive and finite");
@@ -93,7 +98,13 @@ export async function executePaperPortfolioOrder({
       const oldQty = Number(position?.quantity || 0);
       const oldCost = Number(position?.average_cost || 0);
       const newQty = oldQty + quantity;
-      const averageCost = (oldQty * oldCost + totalCost) / newQty;
+      const averageCost = calculateAverageCost({
+        existingQuantity: oldQty,
+        existingAverageCost: oldCost,
+        fillQuantity: quantity,
+        fillPrice: price,
+        feeBps,
+      });
       await client.query(
         `INSERT INTO paper_portfolio_positions (portfolio_id,symbol,quantity,average_cost,updated_at)
          VALUES ($1,$2,$3,$4,NOW())
@@ -106,7 +117,12 @@ export async function executePaperPortfolioOrder({
         [portfolioId, totalCost]
       );
     } else {
-      realizedPnl = (price - Number(position.average_cost)) * quantity - fee;
+      realizedPnl = calculateSellRealizedPnl({
+        quantity,
+        averageCost: Number(position.average_cost),
+        fillPrice: price,
+        feeBps,
+      });
       const remaining = Number(position.quantity) - quantity;
       if (remaining <= 1e-9) {
         await client.query(
@@ -154,19 +170,12 @@ export async function markPaperPortfolio({ portfolioId, prices } = {}) {
       "SELECT symbol,quantity,average_cost FROM paper_portfolio_positions WHERE portfolio_id=$1 ORDER BY symbol",
       [portfolioId]
     );
-    let marketValue = 0;
-    let unrealizedPnl = 0;
-    const normalizedPrices = {};
-    for (const position of positions) {
-      const price = Number(prices[position.symbol]);
-      positive(price, "mark price for " + position.symbol);
-      const quantity = Number(position.quantity);
-      marketValue += quantity * price;
-      unrealizedPnl += quantity * (price - Number(position.average_cost));
-      normalizedPrices[position.symbol] = price;
-    }
-    const cash = Number(portfolio.cash_balance);
-    const equity = cash + marketValue;
+    const valuation = calculatePortfolioValuation({
+      cash: Number(portfolio.cash_balance),
+      positions,
+      prices,
+    });
+    const { cash, marketValue, equity, unrealizedPnl, normalizedPrices } = valuation;
     const snapshotId = randomUUID();
     const { rows } = await client.query(
       `INSERT INTO paper_portfolio_equity_snapshots
