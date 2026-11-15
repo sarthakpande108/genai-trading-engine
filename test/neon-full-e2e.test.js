@@ -75,6 +75,7 @@ test("Neon full application flow: startup, AI analysis, forecast outcomes and pa
       intradayCandles: intradayInput,
       news: { status: "unavailable", provider: "test", articles: [] },
       trackPrediction: true,
+      strictMarketData: false, // synthetic historical fixtures; not a live market-data check
       fetchImpl: async () => ({
         ok: true,
         json: async () => ({

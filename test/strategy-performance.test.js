@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { smaCrossoverSignals } from "../strategy.js";
 import { summarizeBacktest } from "../performance.js";
+import { runPortfolioBacktest } from "../portfolio-backtest.js";
 
 test("SMA crossover stays flat during warm-up and enters on bullish crossover", () => {
   const signals = smaCrossoverSignals([5, 4, 3, 2, 1, 2, 3, 4, 5], {
@@ -43,4 +44,14 @@ test("performance summary handles no trades and zero volatility", () => {
   assert.equal(summary.sharpeRatio, null);
   assert.equal(summary.winRate, 0);
   assert.equal(summary.profitFactor, null);
+});
+
+test("portfolio backtest rejects different timestamps across instruments", () => {
+  assert.throws(() => runPortfolioBacktest({
+    initialCapital: 1000,
+    instruments: {
+      AAA: { bars: [{ timestamp: "2026-01-01T10:00:00Z", open: 10, close: 10 }], signals: [0] },
+      BBB: { bars: [{ timestamp: "2026-01-02T10:00:00Z", open: 10, close: 10 }], signals: [0] },
+    },
+  }), /timestamp-aligned/);
 });

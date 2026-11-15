@@ -3,6 +3,13 @@ import { analyzeStock, closeDatabase, clearSmartSession } from "../index.js";
 const defaults = ["RELIANCE", "TCS", "INFY", "HDFCBANK"];
 const symbols = (process.env.VALIDATION_SYMBOLS || defaults.join(","))
   .split(",").map((value) => value.trim().toUpperCase()).filter(Boolean);
+if (symbols.length === 0 || symbols.length > 4 || new Set(symbols).size !== symbols.length) {
+  throw new Error("Provide between 1 and 4 unique NSE symbols.");
+}
+if (symbols.some((symbol) => !/^[A-Z0-9&-]{1,30}$/.test(symbol))) {
+  throw new Error("Symbols must contain only uppercase letters, digits, &, or hyphens.");
+}
+
 const companies = {
   RELIANCE: "Reliance Industries",
   TCS: "Tata Consultancy Services",
@@ -36,6 +43,12 @@ try {
           ", intraday=" + intraday.candleCount);
       }
       if (!result.prediction?.id) throw new Error("Forecast was not persisted to PostgreSQL");
+      if (!["BULLISH", "BEARISH", "NEUTRAL"].includes(result.analysis?.outlook)) {
+        throw new Error("Gemini returned an unsupported outlook");
+      }
+      if (!Number.isFinite(result.analysis?.directionalProbabilityPct)) {
+        throw new Error("Gemini returned an invalid directional probability");
+      }
       const summary = {
         symbol,
         status: "passed",

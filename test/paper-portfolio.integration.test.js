@@ -23,11 +23,25 @@ test("Neon cash-account paper portfolio persists fills, fees, positions and equi
 
     const firstBuy = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "reliance", side: "BUY", quantity: 10, price: 100, feeBps: 5,
+      idempotencyKey: "buy-once-" + suffix,
       metadata: { testRun: suffix },
     });
     assert.equal(firstBuy.accepted, true);
     assert.equal(firstBuy.status, "FILLED");
     assert.equal(firstBuy.fee, 0.5);
+
+    const replayBuy = await app.executePaperPortfolioOrder({
+      portfolioId, symbol: "RELIANCE", side: "BUY", quantity: 10, price: 100, feeBps: 5,
+      idempotencyKey: "buy-once-" + suffix,
+      metadata: { testRun: suffix },
+    });
+    assert.equal(replayBuy.idempotentReplay, true);
+    assert.equal(replayBuy.orderId, firstBuy.orderId);
+    await assert.rejects(app.executePaperPortfolioOrder({
+      portfolioId, symbol: "RELIANCE", side: "BUY", quantity: 11, price: 100, feeBps: 5,
+      idempotencyKey: "buy-once-" + suffix,
+      metadata: { testRun: suffix },
+    }), /already used for a different paper order/);
 
     const secondBuy = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "RELIANCE", side: "BUY", quantity: 5, price: 120, feeBps: 5,
@@ -72,8 +86,8 @@ test("Neon cash-account paper portfolio persists fills, fees, positions and equi
     assert.ok(Math.abs(report.positions[0].quantity - 10) < 1e-8);
     assert.ok(Math.abs(report.positions[0].averageCost - 106.72) < 1e-8);
     assert.ok(Math.abs(report.metrics.cash - 99_098.85) < 1e-8);
-    assert.equal(report.metrics.closedTrades, 1);
-    assert.equal(report.metrics.winRate, 1);
+    assert.equal(report.metrics.sellFills, 1);
+    assert.equal(report.metrics.profitableSellFillRate, 1);
     assert.equal(report.orders.length, 5);
     assert.equal(report.trades.length, 3);
   } finally {

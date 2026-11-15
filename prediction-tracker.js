@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "./db.js";
 
+export const NEUTRAL_RETURN_BAND_PCT = 0.10;
+export function classifyReturnDirection(returnPct, neutralBandPct = NEUTRAL_RETURN_BAND_PCT) {
+  if (!Number.isFinite(returnPct) || !Number.isFinite(neutralBandPct) || neutralBandPct < 0) {
+    throw new TypeError("returnPct and a non-negative neutralBandPct must be finite");
+  }
+  return returnPct > neutralBandPct ? "BULLISH"
+    : returnPct < -neutralBandPct ? "BEARISH" : "NEUTRAL";
+}
+
 function normalizePrediction(row) {
   return {
     id: row.id,
@@ -95,10 +104,8 @@ export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
       const actualClose = Number(row[4]);
       if (!Number.isFinite(actualClose) || actualClose <= 0) continue;
       const returnPct = (actualClose / Number(prediction.base_close) - 1) * 100;
-      const actualDirection = returnPct > 0 ? "BULLISH" : returnPct < 0 ? "BEARISH" : "NEUTRAL";
-      const directionCorrect = prediction.outlook === "NEUTRAL"
-        ? actualDirection === "NEUTRAL"
-        : prediction.outlook === actualDirection;
+      const actualDirection = classifyReturnDirection(returnPct);
+      const directionCorrect = prediction.outlook === actualDirection;
       await query(
         `INSERT INTO prediction_outcomes
           (prediction_id, horizon_sessions, actual_timestamp, actual_close, return_pct, actual_direction, direction_correct)

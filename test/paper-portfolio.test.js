@@ -71,7 +71,8 @@ test("Neon paper portfolio ledger handles fills, cash, cost basis, P&L and snaps
     const report = await app.getPaperPortfolioReport(portfolio.id);
     assert.equal(report.orders.length, 5);
     assert.equal(report.trades.length, 3);
-    assert.equal(report.metrics.closedTrades, 1);
+    assert.equal(report.metrics.sellFills, 1);
+    assert.equal(report.metrics.profitableSellFillRate, 1);
     assert.ok(Math.abs(report.metrics.totalReturn - 0.029394) < 1e-8);
     assert.equal(report.snapshots.length, 1);
     assert.equal(report.positions[0].quantity, 11);

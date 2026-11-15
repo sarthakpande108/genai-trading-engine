@@ -34,7 +34,7 @@ flowchart TD
 
 The application retrieves and validates the data and calculates indicators. **Gemini is the AI reasoning layer**: it combines the supplied evidence and returns a bullish, bearish or neutral outlook, a 1–5 session horizon, a subjective directional probability estimate, confidence, supporting factors, risks and invalidation conditions.
 
-Forecasts can be stored and later compared with actual prices. The probability is a model estimate, not a statistically calibrated probability.
+Forecasts can be stored and later compared with actual prices. `directionalProbabilityPct` means the model-estimated probability that the stated forecast direction is correct: for BULLISH, the probability of a higher price; for BEARISH, the probability of a lower price. Both directional outlooks use a value above 50% and at most 90%; NEUTRAL must be exactly 50%. It is a subjective estimate, not a statistically calibrated probability.
 
 ### 2. Quantitative strategy and paper trading
 
@@ -53,7 +53,7 @@ flowchart TD
     K --> L[Simulated order record]
 ```
 
-This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated; forecast history is persisted in PostgreSQL. The original paper-order adapter remains available for simple simulations. A separate durable portfolio ledger stores portfolio cash, simulated fills, positions, fees, realized P&L and timestamped equity snapshots in PostgreSQL.
+This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, cash-account constraints, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Single-stock backtests skip buys that exceed available cash; multi-symbol backtests require matching timestamps when timestamps are supplied and process competing entries in alphabetical symbol order. Paper orders are simulated; forecast history is persisted in PostgreSQL. The original paper-order adapter remains available for simple simulations. A separate durable portfolio ledger stores portfolio cash, simulated fills, positions, fees, realized P&L and timestamped equity snapshots in PostgreSQL.
 
 ---
 
@@ -105,6 +105,8 @@ DATABASE_URL_UNPOOLED=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
 PG_POOL_MAX=5
 ```
 
+Broker-fetched analysis data is strict by default: both daily and five-minute candle sets must contain at least 20 valid, strictly chronological, deduplicated candles. Daily candles must be no more than 5 calendar days old. Five-minute candles must be no more than 20 minutes old during the assumed NSE weekday session (09:15–15:30 IST), or 4 calendar days old outside those hours. The intraday rule uses a weekday/session-time approximation, not an official NSE holiday calendar. Set `strictMarketData: false` only for controlled diagnostics or historical fixtures; it disables freshness checks for both injected and broker-fetched data.
+
 The project does not load `.env` automatically. Copy `.env.example` to your local environment and keep credentials out of source control. NewsAPI is optional; without it, analysis continues with news marked unavailable. Neon PostgreSQL is required when forecast tracking is enabled.
 
 ### Set up Neon PostgreSQL
@@ -148,7 +150,7 @@ const result = await analyzeStock({
 
 ### Validate real market data and Gemini
 
-The opt-in validation runner logs in to Angel One SmartAPI, fetches daily and five-minute NSE candles, runs the real Gemini structured-output request and persists each successful forecast to Neon. It defaults to RELIANCE, TCS, INFY and HDFCBANK. This consumes broker/API quota and creates real forecast-history records.
+The opt-in validation runner logs in to Angel One SmartAPI, fetches daily and five-minute NSE candles, runs the real Gemini structured-output request and persists each successful forecast to Neon. It defaults to RELIANCE, TCS, INFY and HDFCBANK and accepts at most four symbols per run. This consumes broker/API quota and creates real forecast-history records. A successful run verifies provider integration for those test cases; it does not establish forecast accuracy or profitability.
 
 Configure `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_MPIN`, `ANGEL_TOTP_SECRET`, `GEMINI_API_KEY`, `DATABASE_URL` and `DATABASE_URL_UNPOOLED`, then run:
 
@@ -210,7 +212,7 @@ console.log(await evaluateStockPredictions());
 console.dir(await listPredictions(), { depth: null });
 ```
 
-Evaluation is an explicit function call; schedule it after market close if recurring evaluation is needed.
+Evaluation is an explicit function call; schedule it after market close if recurring evaluation is needed. Directional scoring classifies returns within ±0.10% as NEUTRAL to avoid treating negligible price noise as a directional win/loss.
 
 ### Run a strategy backtest
 
@@ -265,13 +267,30 @@ console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 | `paper-portfolio.js` | Durable cash-account paper portfolio, fills, positions and equity reports |
 | `migrations/002_paper_portfolios.sql` | Persistent portfolio ledger schema |
 
+## MVP release boundary
+
+This repository's MVP is a **research and paper-trading library**, not a hosted trading platform or a live execution system. The MVP is complete only when the release gates below pass. New indicators, strategies, agents, brokers, dashboards and integrations are explicitly out of scope until then.
+
+### MVP release gates
+
+- [ ] Unit and integration tests pass on a clean install.
+- [ ] Disposable PostgreSQL/Neon migrations and persistence tests pass.
+- [ ] Real Angel One read-only market-data validation passes for a representative NSE watchlist, including market-session freshness.
+- [ ] Real Gemini structured-output validation passes with the configured production model.
+- [ ] Paper portfolio accounting is reconciled against independently calculated buy, sell, fee, cash and P&L examples.
+- [ ] Secrets are stored outside source control; logs do not expose credentials or sensitive broker responses.
+- [ ] Operational owner, database backup/restore procedure, provider quota handling and incident/recovery procedure are documented.
+- [ ] Live order placement remains disabled and is not part of this MVP.
+
+A green unit-test workflow is necessary but does not prove provider compatibility, operational readiness, forecast accuracy or profitability. Do not label the release production-ready until the real-provider and operational gates above have evidence attached.
+
 ## Important limitations
 
 - Gemini analysis is advisory; forecasts are not automatically turned into trades.
 - Directional probabilities are subjective model estimates, not calibrated predictions.
 - Sector context is optional and must be supplied explicitly.
 - News coverage depends on the NewsAPI query and plan; verify original sources.
-- Backtests use simplified assumptions and do not model all real-world trading costs, fills, taxes or market impact.
+- Backtests use simplified assumptions and do not model all real-world trading costs, fills, taxes or market impact. The multi-symbol simulator assumes synchronous bars; timestamped input is checked for exact alignment, while untimestamped arrays remain the caller’s responsibility.
 - The legacy execution adapter's in-memory order list is not durable across restarts. Use the separate PostgreSQL-backed paper portfolio API for persistent portfolio accounting.
 - The live adapter remains guarded by explicit opt-in and an injected submit function; it is not wired to Angel One order placement. The durable paper portfolio API has no live mode.
 

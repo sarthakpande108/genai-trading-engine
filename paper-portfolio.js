@@ -49,7 +49,7 @@ export async function getPaperPortfolio(portfolioId) {
 
 /** Simulate a market fill. Cash, order, trade and position changes commit atomically. */
 export async function executePaperPortfolioOrder({
-  portfolioId, symbol, side, quantity, price, feeBps = 5, metadata = {},
+  portfolioId, symbol, side, quantity, price, feeBps = 5, metadata = {}, idempotencyKey,
 } = {}) {
   if (typeof portfolioId !== "string" || !portfolioId) throw new TypeError("portfolioId is required");
   if (typeof symbol !== "string" || !symbol.trim()) throw new TypeError("symbol is required");
@@ -57,7 +57,12 @@ export async function executePaperPortfolioOrder({
   positive(quantity, "quantity");
   positive(price, "price");
   nonNegative(feeBps, "feeBps");
+  if (idempotencyKey !== undefined &&
+      (typeof idempotencyKey !== "string" || !idempotencyKey.trim() || idempotencyKey.length > 128)) {
+    throw new TypeError("idempotencyKey must be a non-empty string of at most 128 characters");
+  }
   const normalizedSymbol = symbol.trim().toUpperCase();
+
   const orderId = randomUUID();
   return withTransaction(async (client) => {
     const portfolioResult = await client.query(
@@ -67,6 +72,41 @@ export async function executePaperPortfolioOrder({
     if (!portfolio) throw new Error("Paper portfolio not found");
     if (portfolio.status !== "ACTIVE") throw new Error("Paper portfolio is not active");
 
+    // The portfolio row lock serializes requests for this portfolio, so the
+    // idempotency lookup and subsequent insert are safe against concurrent retries.
+    if (idempotencyKey) {
+      const existingResult = await client.query(
+        `SELECT id,symbol,side,quantity,status,fill_price AS "fillPrice",fee,
+           rejection_reason AS "reason"
+         FROM paper_portfolio_orders
+         WHERE portfolio_id=$1 AND metadata->>'idempotencyKey'=$2
+         LIMIT 1`,
+        [portfolioId, idempotencyKey]
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        const sameRequest = existing.symbol === normalizedSymbol &&
+          existing.side === side && Number(existing.quantity) === quantity &&
+          (existing.status !== "FILLED" || Number(existing.fillPrice) === price);
+        if (!sameRequest) throw new Error("idempotencyKey was already used for a different paper order");
+        return {
+          accepted: existing.status === "FILLED",
+          orderId: existing.id,
+          status: existing.status,
+          reason: existing.reason || undefined,
+          symbol: existing.symbol,
+          side: existing.side,
+          quantity: Number(existing.quantity),
+          price: existing.fillPrice === null ? null : Number(existing.fillPrice),
+          fee: Number(existing.fee || 0),
+          idempotentReplay: true,
+        };
+      }
+    }
+
+    const orderMetadata = idempotencyKey
+      ? { ...metadata, idempotencyKey }
+      : metadata;
     const fee = quantity * price * feeBps / 10_000;
     const notional = quantity * price;
     let rejectionReason = null;
@@ -87,7 +127,7 @@ export async function executePaperPortfolioOrder({
         `INSERT INTO paper_portfolio_orders
          (id,portfolio_id,symbol,side,quantity,status,filled_quantity,fee,rejection_reason,metadata)
          VALUES ($1,$2,$3,$4,$5,'REJECTED',0,0,$6,$7::jsonb)`,
-        [orderId, portfolioId, normalizedSymbol, side, quantity, rejectionReason, JSON.stringify(metadata)]
+        [orderId, portfolioId, normalizedSymbol, side, quantity, rejectionReason, JSON.stringify(orderMetadata)]
       );
       return { accepted: false, orderId, status: "REJECTED", reason: rejectionReason };
     }
@@ -145,7 +185,7 @@ export async function executePaperPortfolioOrder({
       `INSERT INTO paper_portfolio_orders
        (id,portfolio_id,symbol,side,quantity,order_type,status,fill_price,filled_quantity,fee,metadata)
        VALUES ($1,$2,$3,$4,$5,'MARKET','FILLED',$6,$5,$7,$8::jsonb)`,
-      [orderId, portfolioId, normalizedSymbol, side, quantity, price, fee, JSON.stringify(metadata)]
+      [orderId, portfolioId, normalizedSymbol, side, quantity, price, fee, JSON.stringify(orderMetadata)]
     );
     await client.query(
       `INSERT INTO paper_portfolio_trades
@@ -211,8 +251,10 @@ export async function getPaperPortfolioReport(portfolioId) {
   const trades = tradeResult.rows.map(numeric);
   const snapshots = snapshotResult.rows.map(numeric).reverse();
   const latest = snapshots.at(-1) || null;
-  const wins = trades.filter((trade) => trade.side === "SELL" && trade.realizedPnl > 0).length;
-  const closed = trades.filter((trade) => trade.side === "SELL");
+  // Each SELL row is an exit fill, not necessarily a fully closed round trip.
+  // Report this as a fill-level rate rather than mislabeling it as trade win rate.
+  const sellFills = trades.filter((trade) => trade.side === "SELL");
+  const profitableSellFills = sellFills.filter((trade) => trade.realizedPnl > 0).length;
   const totalReturn = latest ? latest.equity / portfolio.initialCash - 1 : null;
   let peak = -Infinity, maxDrawdown = 0;
   for (const point of snapshots) {
@@ -233,8 +275,8 @@ export async function getPaperPortfolioReport(portfolioId) {
       unrealizedPnl: latest?.unrealizedPnl ?? null,
       totalReturn,
       maxDrawdown,
-      closedTrades: closed.length,
-      winRate: closed.length ? wins / closed.length : null,
+      sellFills: sellFills.length,
+      profitableSellFillRate: sellFills.length ? profitableSellFills / sellFills.length : null,
     },
   };
 }
