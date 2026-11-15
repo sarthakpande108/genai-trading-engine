@@ -53,7 +53,7 @@ flowchart TD
     K --> L[Simulated order record]
 ```
 
-This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated; forecast history is persisted in PostgreSQL. The paper-order adapter remains in-memory unless a persistent order repository is explicitly used.
+This workflow does not depend on Gemini. It uses deterministic SMA-crossover signals, next-bar-open backtesting, shared-cash portfolio simulation, fee/slippage assumptions, position sizing and order-risk checks. Paper orders are simulated; forecast history is persisted in PostgreSQL. The original paper-order adapter remains available for simple simulations. A separate durable portfolio ledger stores portfolio cash, simulated fills, positions, fees, realized P&L and timestamped equity snapshots in PostgreSQL.
 
 ---
 
@@ -100,6 +100,8 @@ NEWSAPI_KEY=your_newsapi_key
 
 # Neon PostgreSQL (use Neon pooled connection string)
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+# Direct/unpooled Neon URL is required for schema migrations.
+DATABASE_URL_UNPOOLED=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
 PG_POOL_MAX=5
 ```
 
@@ -142,6 +144,62 @@ const result = await analyzeStock({
   },
 });
 ```
+
+
+### Validate real market data and Gemini
+
+The opt-in validation runner logs in to Angel One SmartAPI, fetches daily and five-minute NSE candles, runs the real Gemini structured-output request and persists each successful forecast to Neon. It defaults to RELIANCE, TCS, INFY and HDFCBANK. This consumes broker/API quota and creates real forecast-history records.
+
+Configure `ANGEL_API_KEY`, `ANGEL_CLIENT_CODE`, `ANGEL_MPIN`, `ANGEL_TOTP_SECRET`, `GEMINI_API_KEY`, `DATABASE_URL` and `DATABASE_URL_UNPOOLED`, then run:
+
+```bash
+npm run db:migrate
+npm run validate:live
+```
+
+You can select symbols with `VALIDATION_SYMBOLS=RELIANCE,TCS npm run validate:live`. The GitHub Actions workflow `Live Market + Gemini Validation` is manual-only and uses repository Actions secrets. NewsAPI is optional.
+
+### Durable paper portfolio
+
+Apply the second migration with the direct Neon URL:
+
+```bash
+npm run db:migrate
+```
+
+The exported API provides `createPaperPortfolio`, `executePaperPortfolioOrder`, `markPaperPortfolio`, `getPaperPortfolio` and `getPaperPortfolioReport`. Orders are simulated market fills only. Buys debit cash including fees; sells require sufficient holdings and realize P&L against fee-inclusive average cost. Every fill updates the order, trade, cash and position records in one database transaction. Mark-to-market snapshots require a price for every open position and persist cash, market value, equity and unrealized P&L.
+
+Example:
+
+```js
+import {
+  createPaperPortfolio, executePaperPortfolioOrder,
+  markPaperPortfolio, getPaperPortfolioReport,
+} from "./index.js";
+
+const portfolio = await createPaperPortfolio({
+  name: "Research portfolio",
+  initialCash: 100_000,
+});
+
+await executePaperPortfolioOrder({
+  portfolioId: portfolio.id,
+  symbol: "RELIANCE",
+  side: "BUY",
+  quantity: 10,
+  price: 1_250,
+  feeBps: 5,
+});
+
+await markPaperPortfolio({
+  portfolioId: portfolio.id,
+  prices: { RELIANCE: 1_275 },
+});
+
+console.dir(await getPaperPortfolioReport(portfolio.id), { depth: null });
+```
+
+The durable portfolio ledger is separate from the legacy `createExecutionAdapter`; it does not call Angel One order placement. Use market prices from a trusted data feed for snapshots; do not treat the sample prices above as live quotes.
 
 ### Evaluate saved forecasts
 
@@ -204,6 +262,8 @@ console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 | `backtest.js`, `portfolio-backtest.js` | Single-stock and portfolio backtesting |
 | `risk.js`, `execution.js` | Risk checks and paper execution |
 | `performance.js` | Backtest performance metrics |
+| `paper-portfolio.js` | Durable cash-account paper portfolio, fills, positions and equity reports |
+| `migrations/002_paper_portfolios.sql` | Persistent portfolio ledger schema |
 
 ## Important limitations
 
@@ -212,7 +272,8 @@ console.log(summarizeBacktest(result, { periodsPerYear: 252 }));
 - Sector context is optional and must be supplied explicitly.
 - News coverage depends on the NewsAPI query and plan; verify original sources.
 - Backtests use simplified assumptions and do not model all real-world trading costs, fills, taxes or market impact.
-- Paper execution is simulation only. Its in-memory order list is not durable across restarts. The live adapter requires explicit opt-in and an injected submit function; it is not wired to broker order placement.
+- The legacy execution adapter's in-memory order list is not durable across restarts. Use the separate PostgreSQL-backed paper portfolio API for persistent portfolio accounting.
+- The live adapter remains guarded by explicit opt-in and an injected submit function; it is not wired to Angel One order placement. The durable paper portfolio API has no live mode.
 
 ## Disclaimer
 
