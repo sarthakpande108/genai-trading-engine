@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test",
     "db:migrate": "node scripts/migrate.js",
-    "db:smoke": "node scripts/db-smoke-test.js"
+    "db:smoke": "node scripts/db-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
