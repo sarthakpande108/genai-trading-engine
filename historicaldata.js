@@ -2,7 +2,7 @@
 import { smartConnect } from "./main.js";
 import { downloadScripMaster, findSymbolToken, formatToIST } from "./utlis.js";
 
-export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp = false, from, to } = {}) {
+export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { includeTimestamp = false, from, to, throwOnError = false } = {}) {
   try {
     const sessionData = await smartConnect();
     if (!sessionData) throw new Error("Login failed");
@@ -97,6 +97,7 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
     return includeTimestamp ? collected : collected.map((row) => row.slice(1));
   } catch (err) {
     console.error("Error in fetchLast20DaysDailyCandles:", err);
+    if (throwOnError) throw err;
     return [];
   }
 }
@@ -105,7 +106,7 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
 /**
  * 🕐 Fetch last 20 candles of 5-minute interval (handles market hours)
  */
-export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { includeTimestamp = false } = {}) {
+export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { includeTimestamp = false, throwOnError = false } = {}) {
     try {
       const sessionData = await smartConnect();
       if (!sessionData) throw new Error("Login failed");
@@ -266,6 +267,7 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, {
       return includeTimestamp ? collected : collected.map(row => row.slice(1));
     } catch (err) {
       console.error("Error in fetchLast20FiveMinCandlesRobust:", err);
+      if (throwOnError) throw err;
       return [];
     }
   }
@@ -276,6 +278,6 @@ export function fetchDailyCandlesWithTimestamps(tradingsymbol, exchange, options
 }
 
 /** Timestamp-preserving five-minute candle API. Each row is [timestamp, open, high, low, close, volume]. */
-export function fetchFiveMinuteCandlesWithTimestamps(tradingsymbol, exchange) {
-  return fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { includeTimestamp: true });
+export function fetchFiveMinuteCandlesWithTimestamps(tradingsymbol, exchange, options = {}) {
+  return fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, { ...options, includeTimestamp: true });
 }
