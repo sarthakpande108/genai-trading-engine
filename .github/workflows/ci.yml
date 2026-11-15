@@ -21,7 +21,9 @@ jobs:
         run: npm install --ignore-scripts
       - name: Verify clean install
         run: npm ci --ignore-scripts
-      - name: Run unit tests
+      - name: Run unit and Neon integration tests
+        env:
+          TEST_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npm test
       - name: Run Neon PostgreSQL smoke test
         env:
