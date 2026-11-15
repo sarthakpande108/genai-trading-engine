@@ -164,3 +164,25 @@ test("broker candle freshness validator rejects stale, future and unordered data
   ]);
   assert.doesNotThrow(() => assertFreshCandles(fridayFeed, "five-minute", 4, mondayPreOpen));
 });
+
+
+test("Gemini rejects 50 percent directional estimates and support/resistance on wrong side of price", async () => {
+  const payload = buildStockAnalysisPayload({
+    symbol: "RELIANCE", exchange: "NSE",
+    dailyCandles: makeCandles(), intradayCandles: makeCandles(20, 5),
+  });
+  const invalid = [
+    { ...validAnalysis, directionalProbabilityPct: 50 },
+    { ...validAnalysis, supportLevels: [999] },
+    { ...validAnalysis, resistanceLevels: [1] },
+  ];
+  for (const analysis of invalid) {
+    await assert.rejects(analyzeStockDataWithGemini(payload, {
+      apiKey: "test-key",
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(analysis) }] } }] }),
+      }),
+    }), /failed analysis validation/);
+  }
+});
