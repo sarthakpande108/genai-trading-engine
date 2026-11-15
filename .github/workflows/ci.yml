@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      HAS_DIRECT_DB_URL: ${{ secrets.DATABASE_URL_UNPOOLED != '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -22,14 +24,14 @@ jobs:
       - name: Verify clean install
         run: npm ci --ignore-scripts
       - name: Apply Neon schema migrations when direct URL is configured
-        if: ${{ secrets.DATABASE_URL_UNPOOLED != '' }}
+        if: ${{ env.HAS_DIRECT_DB_URL == 'true' }}
         env:
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: npm run db:migrate
       - name: Run unit and Neon integration tests
         env:
           TEST_DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          TEST_PORTFOLIO_SCHEMA_READY: ${{ secrets.DATABASE_URL_UNPOOLED != '' }}
+          TEST_PORTFOLIO_SCHEMA_READY: ${{ env.HAS_DIRECT_DB_URL }}
         run: npm test
       - name: Run Neon PostgreSQL smoke test
         env:
