@@ -10,13 +10,13 @@ import { buildStockAnalysisPayload, analyzeStockDataWithGemini } from "./gemini-
 export async function analyzeStock({
   symbol, exchange = "NSE", companyName, apiKey, model, fetchImpl, timeoutMs,
   dailyCandles, intradayCandles, marketContext, marketContextSymbols,
-  news, newsApiKey, newsFetchImpl, newsQuery, trackPrediction = true,
+  news, newsApiKey, newsFetchImpl, newsQuery, trackPrediction = true, strictMarketData = false,
 } = {}) {
   if (typeof symbol !== "string" || !symbol.trim()) throw new TypeError("symbol is required, e.g. RELIANCE");
   const injected = Array.isArray(dailyCandles) || Array.isArray(intradayCandles);
   const [daily, intraday] = await Promise.all([
-    dailyCandles ?? fetchDailyCandlesWithTimestamps(symbol, exchange),
-    intradayCandles ?? fetchFiveMinuteCandlesWithTimestamps(symbol, exchange),
+    dailyCandles ?? fetchDailyCandlesWithTimestamps(symbol, exchange, { throwOnError: strictMarketData }),
+    intradayCandles ?? fetchFiveMinuteCandlesWithTimestamps(symbol, exchange, { throwOnError: strictMarketData }),
   ]);
   let resolvedMarketContext = marketContext;
   if (!resolvedMarketContext) {
