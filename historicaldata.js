@@ -30,6 +30,7 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
         fromdate: formatToIST(fromDate),
         todate: formatToIST(toDate),
       });
+      if (response?.status === false) throw new Error(response.message || "Angel One historical candle request failed");
       const historical = (Array.isArray(response?.data) ? response.data : [])
         .filter((row) => Array.isArray(row) && row.length >= 6 && Number.isFinite(Date.parse(row[0])))
         .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
@@ -74,6 +75,7 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
         todate,
       });
 
+      if (resp?.status === false) throw new Error(resp.message || "Angel One daily candle request failed");
       if (resp?.data?.length) {
         collected = resp.data.concat(collected);
       }
@@ -83,9 +85,12 @@ export async function fetchLast20DaysDailyCandles(tradingsymbol, exchange, { inc
     }
 
     // Sort by timestamp and keep only the latest 20 candles
-    collected = collected
-      .sort((a, b) => new Date(a[0]) - new Date(b[0]))
-      .slice(-20);
+    const sorted = collected
+      .filter((row) => Array.isArray(row) && row.length >= 6 && Number.isFinite(Date.parse(row[0])))
+      .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+    collected = sorted.filter((row, index) =>
+      index === 0 || Date.parse(row[0]) !== Date.parse(sorted[index - 1][0])
+    ).slice(-20);
 
     if (collected.length < 20) {
       console.warn(`⚠️ Only ${collected.length} daily candles found.`);
@@ -159,6 +164,7 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, {
           fromdate,
           todate,
         });
+        if (resp?.status === false) throw new Error(resp.message || "Angel One five-minute candle request failed");
         return (resp && Array.isArray(resp.data)) ? resp.data : [];
       }
   
@@ -254,9 +260,12 @@ export async function fetchLast20FiveMinCandlesRobust(tradingsymbol, exchange, {
       }
   
       // Ensure we have at most 20 candles and take the most recent 20
-      if (collected.length > 20) {
-        collected = collected.slice(-20);
-      }
+      const sorted = collected
+        .filter((row) => Array.isArray(row) && row.length >= 6 && Number.isFinite(Date.parse(row[0])))
+        .sort((a, b) => Date.parse(a[0]) - Date.parse(b[0]));
+      collected = sorted.filter((row, index) =>
+        index === 0 || Date.parse(row[0]) !== Date.parse(sorted[index - 1][0])
+      ).slice(-20);
   
       // If still less than 20, warn and return whatever we have
       if (collected.length < 20) {

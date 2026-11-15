@@ -22,10 +22,25 @@ export function runPortfolioBacktest({
     throw new RangeError("feeBps and slippageBps must be non-negative");
   }
 
-  const symbols = Object.keys(instruments);
+  const symbols = Object.keys(instruments).sort();
   if (!symbols.length) throw new RangeError("at least one instrument is required");
   const length = instruments[symbols[0]]?.bars?.length;
   if (!Number.isInteger(length) || length < 1) throw new RangeError("each instrument needs at least one bar");
+
+  const hasTimestamps = symbols.map((symbol) => instruments[symbol]?.bars?.some((bar) => bar?.timestamp !== undefined));
+  if (hasTimestamps.some(Boolean) && !hasTimestamps.every(Boolean)) {
+    throw new RangeError("all instruments must provide timestamps when any instrument is timestamped");
+  }
+  if (hasTimestamps.some(Boolean) && hasTimestamps.every(Boolean)) {
+    const reference = instruments[symbols[0]].bars.map((bar) => Date.parse(bar.timestamp));
+    if (reference.some((value, index) => !Number.isFinite(value) || (index > 0 && value <= reference[index - 1]))) throw new TypeError("instrument timestamps must be valid and strictly chronological");
+    for (const symbol of symbols.slice(1)) {
+      const current = instruments[symbol].bars.map((bar) => Date.parse(bar.timestamp));
+      if (current.some((value, index) => !Number.isFinite(value) || (index > 0 && value <= current[index - 1]) || value !== reference[index])) {
+        throw new RangeError("instrument candles must be timestamp-aligned at every index: " + symbol);
+      }
+    }
+  }
 
   for (const symbol of symbols) {
     const item = instruments[symbol];

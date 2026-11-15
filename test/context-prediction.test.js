@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildMarketContext } from "../market-context.js";
 import { normalizeNewsArticles } from "../news.js";
-import { recordPrediction, evaluatePendingPredictions, listPredictions } from "../prediction-tracker.js";
+import { recordPrediction, evaluatePendingPredictions, listPredictions, classifyReturnDirection } from "../prediction-tracker.js";
 
 function candles(count = 8) {
   return Array.from({ length: count }, (_, i) => {
@@ -62,4 +62,11 @@ test("Neon PostgreSQL persists forecasts and evaluates 1/3/5-session outcomes", 
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;
   }
+});
+
+test("forecast scoring treats small moves as neutral within the tolerance band", () => {
+  assert.equal(classifyReturnDirection(0.05), "NEUTRAL");
+  assert.equal(classifyReturnDirection(-0.10), "NEUTRAL");
+  assert.equal(classifyReturnDirection(0.11), "BULLISH");
+  assert.equal(classifyReturnDirection(-0.11), "BEARISH");
 });

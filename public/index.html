@@ -1,0 +1,35 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GenAI Trading Engine</title><style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#131b2e;--line:#26334c;--muted:#9aabc5;--text:#edf3ff;--accent:#91aaff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#1a2a4a 0,#0b1020 58%);color:var(--text);font:15px/1.55 Inter,system-ui,sans-serif}
+main{max-width:960px;margin:0 auto;padding:52px 22px 80px}.eyebrow{color:#a8bcff;font-size:12px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}
+h1{font-size:clamp(34px,6vw,54px);line-height:1.04;letter-spacing:-.04em;margin:12px 0}p{color:var(--muted)}.intro{max-width:680px;font-size:17px}
+.pill{display:inline-block;padding:4px 10px;border-radius:99px;background:#1c2c4c;color:#c2d1ff;font-size:12px}.panel{background:#131b2eec;border:1px solid var(--line);border-radius:18px;padding:22px;margin-top:24px;box-shadow:0 18px 60px #0003}
+form{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}
+input{width:100%;border:1px solid var(--line);background:#0d1527;color:var(--text);padding:12px;border-radius:10px;font:inherit}button{border:0;border-radius:10px;background:var(--accent);color:#081126;padding:12px 18px;font-weight:750;cursor:pointer}button:disabled{opacity:.5;cursor:wait}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}.metric{background:#0d1527;border:1px solid var(--line);padding:15px;border-radius:12px}.metric small{display:block;color:var(--muted)}.metric strong{font-size:22px}
+.result{white-space:pre-wrap;overflow-wrap:anywhere;color:#dce7ff;font:13px/1.55 ui-monospace,monospace;background:#080e1b;border:1px solid var(--line);padding:16px;border-radius:12px;margin-top:18px;max-height:520px;overflow:auto}.note{font-size:12px;margin-top:18px}
+@media(max-width:680px){form,.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<div class="eyebrow">AI-assisted market research · Indian equities</div><h1>GenAI Trading Engine</h1>
+<p class="intro">An evidence-grounded stock research workflow combining deterministic technical features, Gemini structured analysis, forecast tracking and cash-account paper trading.</p>
+<span class="pill">Research only · No live order execution</span>
+<section class="panel"><h2 style="margin:0 0 6px">Run a stock analysis</h2>
+<p style="margin:0 0 18px">Enter your demo access key and an NSE symbol. The key is sent only to the server endpoint and is not stored by this page.</p>
+<form id="form"><div><label for="key">Demo access key</label><input id="key" type="password" autocomplete="off" required></div>
+<div><label for="symbol">NSE symbol</label><input id="symbol" value="RELIANCE" maxlength="30" pattern="[A-Za-z0-9&-]+" required></div>
+<button id="run" type="submit">Analyze stock</button></form>
+<div class="grid" id="metrics" hidden><div class="metric"><small>Outlook</small><strong id="outlook">—</strong></div>
+<div class="metric"><small>Directional estimate</small><strong id="probability">—</strong></div>
+<div class="metric"><small>Confidence</small><strong id="confidence">—</strong></div></div>
+<pre class="result" id="output" aria-live="polite">Ready. Analysis uses current broker data and consumes model/API quota.</pre></section>
+<section class="panel"><h2 style="margin:0">How it works</h2><p>Angel One candles → deterministic SMA/EMA/RSI/ATR and volume features → Gemini structured analysis → Neon forecast history → 1/3/5-session outcome evaluation.</p>
+<p>Probability estimates are model-generated and remain uncalibrated until validated against a sufficiently large out-of-sample dataset. The app does not place broker orders.</p></section>
+<p class="note">Educational engineering demonstration only. Not investment advice. Never enter broker, database or Google API credentials into this page.</p></main>
+<script>const form=document.querySelector("#form"),button=document.querySelector("#run"),output=document.querySelector("#output");
+form.addEventListener("submit",async event=>{event.preventDefault();button.disabled=true;output.textContent="Fetching market data and requesting structured analysis…";document.querySelector("#metrics").hidden=true;
+try{const response=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+document.querySelector("#key").value},body:JSON.stringify({symbol:document.querySelector("#symbol").value.trim().toUpperCase()})});
+const data=await response.json();if(!response.ok)throw new Error(data.message||data.error||"Request failed ("+response.status+")");
+document.querySelector("#outlook").textContent=data.analysis.outlook;document.querySelector("#probability").textContent=data.analysis.directionalProbabilityPct+"%";
+document.querySelector("#confidence").textContent=data.analysis.confidenceLabel;document.querySelector("#metrics").hidden=false;output.textContent=JSON.stringify(data,null,2);
+}catch(error){output.textContent="Analysis unavailable: "+error.message;}finally{button.disabled=false;}});</script></body></html>

@@ -72,3 +72,13 @@ test("backtest rejects invalid signal values", () => {
     signals: [2],
   }), RangeError);
 });
+
+test("cash-account backtest skips a buy that would exceed available cash", () => {
+  const result = runBacktest({
+    bars: [{ open: 100, close: 100 }, { open: 100, close: 100 }],
+    signals: [1, 1], initialCapital: 50, quantity: 1, feeBps: 0, slippageBps: 0,
+  });
+  assert.equal(result.tradeCount, 0);
+  assert.equal(result.finalEquity, 50);
+  assert.equal(result.skippedOrders[0].reason, "INSUFFICIENT_CASH");
+});
