@@ -10,7 +10,7 @@ function send(res, status, body) {
 
 function authorized(req) {
   const expected = process.env.DEMO_API_KEY;
-  const supplied = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
+  const supplied = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!expected || !supplied) return false;
   const a = Buffer.from(expected);
   const b = Buffer.from(supplied);
