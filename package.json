@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test",
     "db:migrate": "node scripts/migrate.js",
-    "db:smoke": "node scripts/db-smoke.mjs"
+    "db:smoke": "node scripts/db-smoke.mjs",
+    "validate:live": "node scripts/live-validation.mjs"
   },
   "engines": {
     "node": ">=20"
