@@ -26,38 +26,38 @@ test("Neon cash-account paper portfolio persists fills, fees, positions and equi
 
     const firstBuy = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "reliance", side: "BUY",
-      quantity: 10, price: 100, feeBps: 10,
+      quantity: 10, price: 100, feeBps: 5,
       metadata: { testRun: suffix },
     });
     assert.equal(firstBuy.accepted, true);
     assert.equal(firstBuy.status, "FILLED");
-    assert.equal(firstBuy.fee, 1);
+    assert.equal(firstBuy.fee, 0.5);
 
     const secondBuy = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "RELIANCE", side: "BUY",
-      quantity: 5, price: 120, feeBps: 10,
+      quantity: 5, price: 120, feeBps: 5,
       metadata: { testRun: suffix },
     });
     assert.equal(secondBuy.accepted, true);
-    assert.ok(Math.abs(secondBuy.fee - 0.6) < 1e-10);
+    assert.ok(Math.abs(secondBuy.fee - 0.3) < 1e-10);
 
     const firstMark = await app.markPaperPortfolio({
       portfolioId, prices: { reliance: 130 },
     });
     assert.ok(Math.abs(firstMark.marketValue - 1_950) < 1e-8);
-    assert.ok(Math.abs(firstMark.equity - 100_348.4) < 1e-8);
+    assert.ok(Math.abs(firstMark.equity - 100_349.2) < 1e-8);
 
     const sell = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "RELIANCE", side: "SELL",
-      quantity: 5, price: 140, feeBps: 10,
+      quantity: 5, price: 140, feeBps: 5,
       metadata: { testRun: suffix },
     });
     assert.equal(sell.accepted, true);
-    assert.ok(Math.abs(sell.realizedPnl - 165.43333333333334) < 1e-8);
+    assert.ok(Math.abs(sell.realizedPnl - 166.05) < 1e-8);
 
     const rejectedSell = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "RELIANCE", side: "SELL",
-      quantity: 100, price: 140, feeBps: 10,
+      quantity: 100, price: 140, feeBps: 5,
       metadata: { testRun: suffix },
     });
     assert.equal(rejectedSell.accepted, false);
@@ -65,7 +65,7 @@ test("Neon cash-account paper portfolio persists fills, fees, positions and equi
 
     const rejectedBuy = await app.executePaperPortfolioOrder({
       portfolioId, symbol: "RELIANCE", side: "BUY",
-      quantity: 10_000, price: 140, feeBps: 10,
+      quantity: 10_000, price: 140, feeBps: 5,
       metadata: { testRun: suffix },
     });
     assert.equal(rejectedBuy.accepted, false);
@@ -80,13 +80,14 @@ test("Neon cash-account paper portfolio persists fills, fees, positions and equi
       portfolioId, prices: { RELIANCE: 140 },
     });
     assert.ok(Math.abs(finalMark.marketValue - 1_400) < 1e-8);
-    assert.ok(Math.abs(finalMark.equity - 100_497.7) < 1e-8);
+    assert.ok(Math.abs(finalMark.equity - 100_498.85) < 1e-8);
 
     const report = await app.getPaperPortfolioReport(portfolioId);
     assert.equal(report.positions.length, 1);
     assert.equal(report.positions[0].symbol, "RELIANCE");
     assert.ok(Math.abs(report.positions[0].quantity - 10) < 1e-8);
-    assert.ok(Math.abs(report.metrics.cash - 99_097.7) < 1e-8);
+    assert.ok(Math.abs(report.positions[0].averageCost - 106.72) < 1e-8);
+    assert.ok(Math.abs(report.metrics.cash - 99_098.85) < 1e-8);
     assert.equal(report.metrics.closedTrades, 1);
     assert.equal(report.metrics.winRate, 1);
     assert.equal(report.orders.length, 5);
