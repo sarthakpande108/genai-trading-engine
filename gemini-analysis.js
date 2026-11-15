@@ -154,6 +154,7 @@ export async function analyzeStockDataWithGemini(payload, {
           generationConfig: {
             responseMimeType: "application/json",
             responseJsonSchema: ANALYSIS_SCHEMA,
+            maxOutputTokens: 2048,
           },
         }),
       }
@@ -175,15 +176,17 @@ export async function analyzeStockDataWithGemini(payload, {
       requiredStrings.every((key) => typeof analysis[key] === "string") &&
       requiredArrays.every((key) => Array.isArray(analysis[key]));
     const probabilityValid = complete && Number.isFinite(analysis.directionalProbabilityPct) &&
-      analysis.directionalProbabilityPct >= 50 && analysis.directionalProbabilityPct <= 90 &&
-      (analysis.outlook !== "NEUTRAL" || analysis.directionalProbabilityPct === 50);
-    const levelsValid = complete &&
-      ["supportLevels", "resistanceLevels"].every((key) =>
-        analysis[key].every((level) => Number.isFinite(level) && level > 0)
-      );
+      analysis.directionalProbabilityPct <= 90 &&
+      (analysis.outlook === "NEUTRAL"
+        ? analysis.directionalProbabilityPct === 50
+        : analysis.directionalProbabilityPct > 50);
+    const referenceClose = Number(payload?.daily?.latestCandle?.close);
+    const levelsValid = complete && Number.isFinite(referenceClose) && referenceClose > 0 &&
+      analysis.supportLevels.every((level) => Number.isFinite(level) && level > 0 && level < referenceClose) &&
+      analysis.resistanceLevels.every((level) => Number.isFinite(level) && level > 0 && level > referenceClose);
     if (!complete || !["BULLISH", "BEARISH", "NEUTRAL"].includes(analysis.outlook) ||
         !["LOW", "MEDIUM", "HIGH"].includes(analysis.confidenceLabel) ||
-        !probabilityValid || !levelsValid || !complete || analysis.symbol !== payload.symbol) {
+        !probabilityValid || !levelsValid || analysis.symbol !== payload.symbol) {
       throw new Error("Gemini response failed analysis validation");
     }
     return {
