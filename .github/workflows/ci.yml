@@ -28,10 +28,38 @@ jobs:
         env:
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: npm run db:migrate
+      - name: Verify Neon cash-account schema readiness
+        env:
+          TEST_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$TEST_DATABASE_URL" ]; then
+            echo "TEST_PORTFOLIO_SCHEMA_READY=false" >> "$GITHUB_ENV"
+            echo "::warning::DATABASE_URL is not configured; Neon cash-account integration tests will be skipped."
+            exit 0
+          fi
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+          const pool = new pg.Pool({
+            connectionString: process.env.TEST_DATABASE_URL,
+            ssl: { rejectUnauthorized: true },
+            max: 1,
+          });
+          try {
+            const result = await pool.query(
+              "SELECT 1 FROM schema_migrations WHERE version = $1",
+              ["002_paper_portfolios"],
+            );
+            if (result.rowCount !== 1) {
+              throw new Error("Neon migration 002_paper_portfolios is not applied.");
+            }
+          } finally {
+            await pool.end();
+          }
+          NODE
+          echo "TEST_PORTFOLIO_SCHEMA_READY=true" >> "$GITHUB_ENV"
       - name: Run unit and Neon integration tests
         env:
           TEST_DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          TEST_PORTFOLIO_SCHEMA_READY: ${{ env.HAS_DIRECT_DB_URL }}
         run: npm test
       - name: Run Neon PostgreSQL smoke test
         env:
