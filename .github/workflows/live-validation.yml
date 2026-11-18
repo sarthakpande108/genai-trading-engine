@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install dependencies
+      - name: Synchronize lockfile with package manifest
+        run: npm install --ignore-scripts
+      - name: Verify clean install from synchronized lockfile
         run: npm ci --ignore-scripts
       - name: Run automated tests
         run: npm test
