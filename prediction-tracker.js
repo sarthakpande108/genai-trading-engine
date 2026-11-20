@@ -1,14 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "./db.js";
+import { buildPredictionOutcomes } from "./prediction-outcomes.js";
 
-export const NEUTRAL_RETURN_BAND_PCT = 0.10;
-export function classifyReturnDirection(returnPct, neutralBandPct = NEUTRAL_RETURN_BAND_PCT) {
-  if (!Number.isFinite(returnPct) || !Number.isFinite(neutralBandPct) || neutralBandPct < 0) {
-    throw new TypeError("returnPct and a non-negative neutralBandPct must be finite");
-  }
-  return returnPct > neutralBandPct ? "BULLISH"
-    : returnPct < -neutralBandPct ? "BEARISH" : "NEUTRAL";
-}
+export { NEUTRAL_RETURN_BAND_PCT, classifyReturnDirection } from "./prediction-outcomes.js";
 
 function normalizePrediction(row) {
   return {
@@ -67,8 +61,8 @@ export async function recordPrediction({ analysis, input } = {}) {
 }
 
 /**
- * Score pending forecasts against timestamped daily candles.
- * The callback must return ascending [timestamp, open, high, low, close, volume] rows.
+ * Score pending forecasts against unique, valid timestamped daily closes.
+ * Invalid rows are ignored; conflicting duplicate timestamps are excluded.
  */
 export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
   if (typeof fetchDailyCandles !== "function") throw new TypeError("fetchDailyCandles callback is required");
@@ -85,6 +79,7 @@ export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
      ORDER BY p.forecasted_at ASC`
   );
   const updated = [];
+  let insertedOutcomeCount = 0;
   for (const prediction of pending) {
     const outcomes = prediction.outcomes || {};
     const missing = [1, 3, 5].filter((h) => !outcomes[String(h)]);
@@ -93,31 +88,37 @@ export async function evaluatePendingPredictions({ fetchDailyCandles } = {}) {
       // Include the base session even when the broker API treats fromdate as exclusive.
       from: new Date(new Date(prediction.base_candle_timestamp).getTime() - 24 * 60 * 60 * 1000),
     });
-    if (!Array.isArray(rows)) continue;
-    const baseTime = new Date(prediction.base_candle_timestamp).getTime();
-    const ordered = [...rows].sort((a, b) => Date.parse(a?.[0]) - Date.parse(b?.[0]));
-    const baseIndex = ordered.findIndex((row) => Date.parse(row?.[0]) === baseTime);
-    if (baseIndex < 0) continue;
-    for (const horizon of missing) {
-      const row = ordered[baseIndex + horizon];
-      if (!row) continue;
-      const actualClose = Number(row[4]);
-      if (!Number.isFinite(actualClose) || actualClose <= 0) continue;
-      const returnPct = (actualClose / Number(prediction.base_close) - 1) * 100;
-      const actualDirection = classifyReturnDirection(returnPct);
-      const directionCorrect = prediction.outlook === actualDirection;
-      await query(
+    const scoredOutcomes = buildPredictionOutcomes({
+      rows,
+      baseTimestamp: prediction.base_candle_timestamp,
+      baseClose: Number(prediction.base_close),
+      outlook: prediction.outlook,
+      horizons: missing,
+    });
+    let insertedForPrediction = 0;
+    for (const outcome of scoredOutcomes) {
+      const { rows: insertedRows } = await query(
         `INSERT INTO prediction_outcomes
           (prediction_id, horizon_sessions, actual_timestamp, actual_close, return_pct, actual_direction, direction_correct)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (prediction_id, horizon_sessions) DO NOTHING`,
-        [prediction.id, horizon, new Date(row[0]).toISOString(), actualClose,
-          returnPct, actualDirection, directionCorrect]
+         ON CONFLICT (prediction_id, horizon_sessions) DO NOTHING
+         RETURNING horizon_sessions`,
+        [prediction.id, outcome.horizonSessions, outcome.actualTimestamp,
+          outcome.actualClose, outcome.returnPct, outcome.actualDirection,
+          outcome.directionCorrect]
       );
+      insertedForPrediction += insertedRows.length;
     }
-    updated.push(prediction.id);
+    if (insertedForPrediction > 0) {
+      updated.push(prediction.id);
+      insertedOutcomeCount += insertedForPrediction;
+    }
   }
-  return { updatedPredictionIds: updated, totalPredictions: pending.length };
+  return {
+    updatedPredictionIds: updated,
+    totalPredictions: pending.length,
+    insertedOutcomeCount,
+  };
 }
 
 export async function listPredictions() {
