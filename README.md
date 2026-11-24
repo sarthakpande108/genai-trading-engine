@@ -80,7 +80,7 @@ NEWSAPI_KEY=                  # optional
 PG_POOL_MAX=5
 ```
 
-The project does not load `.env` automatically. Never commit credentials. NewsAPI is optional.
+The project does not load `.env` automatically. Never commit credentials. The root-level `config.js` is ignored because legacy local setups may store broker credentials there; use the environment variables above instead. If a credential has ever been committed, revoke or rotate it with the provider—deleting the file does not remove it from Git history. NewsAPI is optional.
 
 ## Vercel Hobby deployment
 

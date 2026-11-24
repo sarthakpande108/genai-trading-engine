@@ -6,6 +6,9 @@ yarn-error.log*
 
 # Environment files
 .env
+
+# Legacy local broker configuration may contain credentials
+/config.js
 .env.local
 .env.development.local
 .env.test.local
