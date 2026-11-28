@@ -55,3 +55,29 @@ test("portfolio backtest rejects different timestamps across instruments", () =>
     },
   }), /timestamp-aligned/);
 });
+
+test("same-open exits release cash before alphabetically earlier entries", () => {
+  const bars = [
+    { open: 100, close: 100 },
+    { open: 100, close: 100 },
+    { open: 100, close: 100 },
+  ];
+  const result = runPortfolioBacktest({
+    initialCapital: 1_000,
+    feeBps: 0,
+    slippageBps: 0,
+    instruments: {
+      AAA: { quantity: 10, bars, signals: [0, 1, 1] },
+      ZZZ: { quantity: 10, bars, signals: [1, 0, 0] },
+    },
+  });
+
+  assert.equal(result.skippedOrders.length, 0);
+  assert.deepEqual(result.trades.map(({ symbol, exitIndex }) => [symbol, exitIndex]), [
+    ["ZZZ", 2],
+    ["AAA", 2],
+  ]);
+  assert.equal(result.tradeCount, 2);
+  assert.equal(result.finalEquity, 1_000);
+  assert.equal(result.assumptions.sameOpenOrderPriority, "exits_before_entries");
+});
