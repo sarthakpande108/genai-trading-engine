@@ -2,6 +2,8 @@
  * Cash-account portfolio backtester for multiple instruments.
  * Per-symbol signals are evaluated at close and executed at the next bar open.
  * Long-only, fixed quantity per symbol; no leverage, shorts, margin or partial fills.
+ * At a shared open, exits execute before entries so released cash is available
+ * to new positions without symbol-name-dependent order allocation.
  */
 
 function positive(value, name) {
@@ -98,7 +100,14 @@ export function runPortfolioBacktest({
 
   for (let index = 0; index < length; index += 1) {
     if (index > 0) {
-      for (const symbol of symbols) execute(symbol, instruments[symbol].signals[index - 1], index);
+      // Signals from the previous close share this bar's open. Liquidate first
+      // so same-open exits release cash before new entries are affordability-checked.
+      for (const symbol of symbols) {
+        if (instruments[symbol].signals[index - 1] === 0) execute(symbol, 0, index);
+      }
+      for (const symbol of symbols) {
+        if (instruments[symbol].signals[index - 1] === 1) execute(symbol, 1, index);
+      }
     }
     let equity = cash;
     for (const symbol of symbols) {
@@ -124,6 +133,12 @@ export function runPortfolioBacktest({
   return {
     initialCapital, finalEquity, totalReturn: finalEquity / initialCapital - 1,
     maxDrawdown, trades, tradeCount: trades.length, skippedOrders, equityCurve,
-    assumptions: { execution: "next_bar_open", positionMode: "long_only_cash_account", feeBps, slippageBps },
+    assumptions: {
+      execution: "next_bar_open",
+      positionMode: "long_only_cash_account",
+      sameOpenOrderPriority: "exits_before_entries",
+      feeBps,
+      slippageBps,
+    },
   };
 }
